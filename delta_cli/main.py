@@ -7,6 +7,7 @@ import uuid
 import webbrowser
 import httpx
 import typer
+from .local_commands import run, evaluate
 from .artifacts import build_sparse, validate_manifest, file_hash
 
 app = typer.Typer(help="Delta League: submit a patch, prove an improvement.", no_args_is_help=True)
@@ -275,3 +276,7 @@ def results(submission: str, json_output: bool = typer.Option(False, "--json")):
 @app.command()
 def leaderboard(model: str | None = None):
     show(call("GET", "leaderboard", params={"model": model} if model else {}))
+
+
+app.command("run")(run)
+app.command("evaluate")(evaluate)

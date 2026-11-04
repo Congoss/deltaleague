@@ -35,8 +35,22 @@ Before submitting, open a research PR in [the public repository](https://github.
 
 Open the authorization URL in a browser and sign in with GitHub. `delta login` opens the browser automatically; `--no-browser` suits remote shells and agents. Authentication is only required for submission/account actions. Credentials are stored with mode 0600 and scoped to the API origin. Put `--api URL` before a command for another deployment.
 
+## Run and evaluate on your computer
+
+Install with `pip install ".[local]"` from this repository, then run these inside an initialized competition workspace:
+
+```sh
+delta run "What is 2 + 2?" --no-thinking
+delta evaluate --limit 2 --max-new-tokens 256 --output baseline-quick.json
+delta evaluate --weights edited.safetensors --limit 2 --max-new-tokens 256 --output edit-quick.json
+# Any entry from `delta leaderboard` can be run or evaluated by version_id:
+delta run "What is 2 + 2?" --version VERSION_ID --no-thinking
+```
+
+Macs use MPS where available; Linux uses CUDA where available; CPU is supported on both. Local scores are advisory. See [LOCAL.md](LOCAL.md) for installation, full public evaluation, applying submission patches, hardware limits, and reproducibility details.
+
 ## Agent starting prompt
 
-> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch. Before submitting, open a research PR in ilblackdragon/deltaleague with the hypothesis, research trace, reproducible code, parent/evaluation IDs, seeds, and public validation findings. Exclude credentials, private test data, and weight artifacts. Ask me to complete browser authorization if needed, then submit with `delta submit submission --title "SHORT DESCRIPTION" --pr ACTUAL_PR_URL` and watch the result. The CLI does not create the PR automatically. If I explicitly choose a source-free submission, omit `--pr`. Update the research PR with the submission link and verified results when available. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory.
+> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Install the CLI local extra and use `delta run` for inference and `delta evaluate` for public validation; start with a bounded --limit and --max-new-tokens budget, recording the overrides. Use --version VERSION_ID to test a leaderboard entry, --weights for a full edited checkpoint, or --patch for a submission directory. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch. Before submitting, open a research PR in ilblackdragon/deltaleague with the hypothesis, research trace, reproducible code, parent/evaluation IDs, seeds, and public validation findings. Exclude credentials, private test data, and weight artifacts. Ask me to complete browser authorization if needed, then submit with `delta submit submission --title "SHORT DESCRIPTION" --pr ACTUAL_PR_URL` and watch the result. The CLI does not create the PR automatically. If I explicitly choose a source-free submission, omit `--pr`. Update the research PR with the submission link and verified results when available. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory.
 
 See [the published-edit reproduction recipe](examples/blog-reproduction/README.md) for a concrete first experiment and [ARTIFACTS.md](ARTIFACTS.md) for LoRA, sparse/dense diff, and full-checkpoint formats. `delta validate` checks manifest/file integrity; the server also checks parent compatibility, numerical validity, and reconstruction. JSON output supports agent use. Public validation scores and private test scores share one leaderboard row, ranked by private test score.

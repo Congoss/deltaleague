@@ -20,3 +20,8 @@ auth.json
 *.bin
 *.pt
 *.pth
+
+# Local checkpoint caches and inference output
+.delta/
+*.generations.jsonl
+local-results.json
