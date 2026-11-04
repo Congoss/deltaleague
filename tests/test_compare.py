@@ -55,6 +55,42 @@ def test_consistent_gain_is_separable_and_seeded(tmp_path):
     assert one['overall']['ci95'] == two['overall']['ci95']
 
 
+def test_consistent_regression_is_separable(tmp_path):
+    base = {b: [[1]] * 40 for b in 'abc'}
+    cand = {b: [[0]] * 30 + [[1]] * 10 for b in 'abc'}
+    result = compare.compare_reports(write_run(tmp_path, 'x', base), write_run(tmp_path, 'y', cand), seed=3)
+    o = result['overall']
+    assert o['diff'] < 0 and o['ci95'][1] < 0
+    assert o['losses'] == 90 and o['wins'] == 0 and o['separable']
+    assert 'Candidate is separable' in compare.render(result)
+
+
+def test_render_not_separable_and_generation_warning(tmp_path):
+    base = write_run(tmp_path, 'x', flat(4, 1))
+    cand = write_run(tmp_path, 'y', flat(4, 1), generation={**GENERATION, 'max_tokens': 64})
+    text = compare.render(compare.compare_reports(base, cand, resamples=50))
+    assert 'Not separable at this sample size' in text
+    assert 'Generation settings differ' in text
+
+
+def test_different_benchmark_names_are_refused(tmp_path):
+    with pytest.raises(ValueError, match='example'):
+        compare.compare_reports(write_run(tmp_path, 'x', {'a': [[1]]}), write_run(tmp_path, 'y', {'b': [[1]]}))
+
+
+def test_malformed_inputs_fail_cleanly(tmp_path):
+    base = write_run(tmp_path, 'x', flat(3, 1))
+    runner = CliRunner()
+    bad = tmp_path / 'bad.json'
+    bad.write_text('{not json')
+    result = runner.invoke(main.app, ['compare', str(base), str(bad)])
+    assert result.exit_code == 1 and 'Compare failed' in result.output
+    cand = write_run(tmp_path, 'z', flat(3, 1))
+    (tmp_path / 'z.generations.jsonl').write_text(json.dumps({'benchmark': 'a', 'example_index': 0, 'sample': 0}) + '\n')
+    result = runner.invoke(main.app, ['compare', str(base), str(cand)])
+    assert result.exit_code == 1 and 'Compare failed' in result.output
+
+
 def test_collapsed_interval_without_sign_evidence_is_not_separable(tmp_path):
     one = compare.compare_reports(write_run(tmp_path, 'x', {'a': [[0]]}), write_run(tmp_path, 'y', {'a': [[1]]}), resamples=50)
     assert one['overall']['ci95'] == [100, 100]

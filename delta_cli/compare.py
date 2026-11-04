@@ -20,7 +20,8 @@ def load(path):
     rows = local.generations_path(path)
     if not rows.exists():
         raise ValueError(f'Generations file not found: {rows}')
-    means = local.example_means(json.loads(line) for line in rows.read_text().splitlines() if line.strip())
+    with rows.open(encoding='utf-8') as f:
+        means = local.example_means(json.loads(l) for l in f if l.strip())
     if not means:
         raise ValueError('Generations file has no rows.')
     return report, means
