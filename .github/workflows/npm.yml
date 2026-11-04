@@ -1,0 +1,17 @@
+name: Test npm launcher
+on:
+  workflow_dispatch:
+  push:
+    paths: ['npm/**', '.github/workflows/npm.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test --prefix npm
+      - run: npm pack ./npm --dry-run
