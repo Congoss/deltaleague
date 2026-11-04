@@ -1,0 +1,63 @@
+name: PR software checks
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Existing PR number to test
+        required: true
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  tests:
+    name: CLI tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Determine test scope from trusted policy
+        id: scope
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        with:
+          script: |
+            const {inspect} = require('./.github/scripts/contribution-policy.cjs');
+            const result = await inspect(github,context,Number(process.env.PR_NUMBER));
+            if (result.errors.length) {core.setFailed('Fix contribution-policy violations before running software tests.');return;}
+            core.setOutput('software',result.category !== 'research');
+            core.setOutput('sha',result.pr.head.sha);
+            core.setOutput('repo',result.pr.head.repo.full_name);
+      - name: Check policy regression tests
+        run: node --test .github/scripts/policy.test.cjs
+      - uses: actions/checkout@v4
+        if: steps.scope.outputs.software == 'true'
+        with:
+          repository: ${{ steps.scope.outputs.repo }}
+          ref: ${{ steps.scope.outputs.sha }}
+          persist-credentials: false
+      # Untrusted tooling runs only on this disposable, read-only runner. No caches,
+      # secrets, publishing environments, artifact uploads, or self-hosted runners.
+      - uses: actions/setup-python@v5
+        if: steps.scope.outputs.software == 'true'
+        with:
+          python-version: '3.12'
+      - name: Install and test tooling
+        if: steps.scope.outputs.software == 'true'
+        run: |
+          python -m pip install pytest
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install '.[local]'
+          python -m pytest -q tests
+          delta --help
+          delta run --help
+          delta evaluate --help
+          npm test --prefix npm
+      - name: Research-only PR
+        if: steps.scope.outputs.software == 'false'
+        run: echo 'Research source is reviewed as data; it is not executed by CI.'
