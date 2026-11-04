@@ -183,7 +183,7 @@ def example_means(rows):
     grouped = {}
     for row in rows:
         group = grouped.setdefault(row['benchmark'], {'scores': {}, 'truncated': [], 'tokens': []})
-        group['scores'].setdefault(row.get('example_id', row.get('example_index')), []).append(row['score'])
+        group['scores'].setdefault(row['example_index'], []).append(row['score'])
         group['truncated'].append(bool(row['truncated']))
         group['tokens'].append(row['tokens'])
     return {name: {'examples': {k: statistics.mean(v) for k, v in g['scores'].items()},
@@ -198,7 +198,7 @@ def evaluate(runner, tasks, generation, stream, progress):
         score = score_answer(task['example'], result['text'])
         row = {k: v for k, v in task.items() if k != 'example'}
         row.update(example_id=task['example']['id'], score=score, **result)
-        rows.append(row)
+        rows.append({k: row[k] for k in ('benchmark', 'example_index', 'example_id', 'score', 'truncated', 'tokens')})
         stream.write(json.dumps(row) + '\n')
         stream.flush()
         tokens += result['tokens']

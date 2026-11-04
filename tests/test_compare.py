@@ -55,6 +55,24 @@ def test_consistent_gain_is_separable_and_seeded(tmp_path):
     assert one['overall']['ci95'] == two['overall']['ci95']
 
 
+def test_collapsed_interval_without_sign_evidence_is_not_separable(tmp_path):
+    one = compare.compare_reports(write_run(tmp_path, 'x', {'a': [[0]]}), write_run(tmp_path, 'y', {'a': [[1]]}), resamples=50)
+    assert one['overall']['ci95'] == [100, 100]
+    assert one['overall']['sign_test_p'] == 1.0 and not one['overall']['separable']
+    two = compare.compare_reports(write_run(tmp_path, 'p', {'a': [[0], [0]]}), write_run(tmp_path, 'q', {'a': [[1], [1]]}), resamples=50)
+    assert two['overall']['sign_test_p'] == 0.5 and not two['overall']['separable']
+    assert two['overall']['wins'] == 2 and two['overall']['losses'] == 0 and two['overall']['ties'] == 0
+
+
+def test_duplicate_example_ids_stay_separate_examples(tmp_path):
+    base = write_run(tmp_path, 'x', {'a': [[0], [1]]})
+    rows = [json.loads(line) for line in (tmp_path / 'x.generations.jsonl').read_text().splitlines()]
+    (tmp_path / 'x.generations.jsonl').write_text(''.join(json.dumps({**r, 'example_id': 'dup'}) + '\n' for r in rows))
+    assert compare.load(base)[1]['a']['examples'] == {0: 0, 1: 1}
+    result = compare.compare_reports(base, write_run(tmp_path, 'y', {'a': [[1], [1]]}), resamples=10)
+    assert result['benchmarks']['a']['n'] == 2
+
+
 def test_mismatched_inputs_are_refused(tmp_path):
     base = write_run(tmp_path, 'x', {'a': [[1], [0]]})
     with pytest.raises(ValueError, match='example'):
@@ -64,8 +82,8 @@ def test_mismatched_inputs_are_refused(tmp_path):
 
 
 def test_cli_json_and_output_never_overwrites(tmp_path):
-    base = write_run(tmp_path, 'x', flat(5, 0))
-    cand = write_run(tmp_path, 'y', flat(5, 1))
+    base = write_run(tmp_path, 'x', flat(6, 0))
+    cand = write_run(tmp_path, 'y', flat(6, 1))
     runner = CliRunner()
     result = runner.invoke(main.app, ['compare', str(base), str(cand), '--resamples', '200', '--json'])
     assert result.exit_code == 0
@@ -141,6 +159,19 @@ def test_generations_file_missing_and_cli_errors(tmp_path):
     result = CliRunner().invoke(main.app, ['compare', str(base), str(tmp_path / 'missing.json')])
     assert result.exit_code == 1
     assert 'Compare failed' in result.output
+
+
+def test_malformed_inputs_fail_with_a_sentence(tmp_path):
+    base = write_run(tmp_path, 'x', flat(3, 1))
+    cand = write_run(tmp_path, 'y', flat(3, 1))
+    runner = CliRunner()
+    cand.write_text('[]')
+    result = runner.invoke(main.app, ['compare', str(base), str(cand)])
+    assert result.exit_code == 1 and 'Report must be' in result.output
+    cand = write_run(tmp_path, 'z', flat(3, 1))
+    (tmp_path / 'z.generations.jsonl').write_text('')
+    result = runner.invoke(main.app, ['compare', str(base), str(cand)])
+    assert result.exit_code == 1 and 'no rows' in result.output
 
 
 def test_mean_tokens_reported(tmp_path):

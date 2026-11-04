@@ -15,10 +15,15 @@ SUMMARY = ('source_version_id', 'artifact', 'generation', 'validation_score')
 
 def load(path):
     report = json.loads(Path(path).read_text())
+    if not isinstance(report, dict):
+        raise ValueError('Report must be a JSON object.')
     rows = local.generations_path(path)
     if not rows.exists():
         raise ValueError(f'Generations file not found: {rows}')
-    return report, local.example_means(json.loads(line) for line in rows.read_text().splitlines() if line.strip())
+    means = local.example_means(json.loads(line) for line in rows.read_text().splitlines() if line.strip())
+    if not means:
+        raise ValueError('Generations file has no rows.')
+    return report, means
 
 
 def side(path, report):
@@ -52,7 +57,8 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
     boot = {b: [] for b in names}
     overall = []
     for _ in range(resamples):
-        means = [statistics.mean(rng.choices(diffs[b], k=len(diffs[b]))) for b in names]
+        samples = [rng.choices(diffs[b], k=len(diffs[b])) for b in names]
+        means = [math.fsum(sample) / len(sample) for sample in samples]
         for b, mean in zip(names, means):
             boot[b].append(mean)
         overall.append(statistics.mean(means))
@@ -69,6 +75,9 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
             'baseline_mean_tokens': base_b[b]['mean_tokens'], 'candidate_mean_tokens': cand_b[b]['mean_tokens'],
             'run_worst_case_se': 50 / math.sqrt(n)}
     ci = interval(overall)
+    pooled = [d for b in names for d in diffs[b]]
+    wins, losses = sum(d > 0 for d in pooled), sum(d < 0 for d in pooled)
+    sign_p = sign_test(wins, losses)
     return {'baseline': side(baseline, base), 'candidate': side(candidate, cand),
             'model_id': base.get('model_id'), 'config_id': base.get('config_id'),
             'validation_sha256': base.get('validation_sha256'),
@@ -78,7 +87,8 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
                         'candidate_mean': statistics.mean(v['candidate_mean'] for v in benchmarks.values()),
                         'diff': statistics.mean(v['diff'] for v in benchmarks.values()), 'ci95': ci,
                         'run_worst_case_se': 100 * math.sqrt(sum(.25 / v['n'] for v in benchmarks.values())) / len(names),
-                        'separable': ci[0] > 0 or ci[1] < 0},
+                        'wins': wins, 'losses': losses, 'ties': len(pooled) - wins - losses, 'sign_test_p': sign_p,
+                        'separable': (ci[0] > 0 or ci[1] < 0) and sign_p < .05},
             'resamples': resamples, 'seed': seed, 'note': NOTE}
 
 
@@ -91,9 +101,10 @@ def render(result):
     o = result['overall']
     lines.append(f"overall {o['baseline_mean']:.1f} {o['candidate_mean']:.1f} {o['diff']:+.1f} [{o['ci95'][0]:+.1f}, {o['ci95'][1]:+.1f}]")
     se = o['run_worst_case_se']
-    lines.append('Candidate is separable from baseline (95% CI excludes 0).' if o['separable'] else
-                 f"Not separable at this sample size. Worst-case standard error of one run's mean: {se:.2f} points; "
-                 f"two runs separate at about 2.8\u00d7 that ({1.96 * math.sqrt(2) * se:.2f} points).")
+    spread = (f"Worst-case standard error of one run's mean: {se:.2f} points; "
+              f"two runs separate at about 2.8\u00d7 that ({1.96 * math.sqrt(2) * se:.2f} points).")
+    lines.append(f"Candidate is separable from baseline (95% CI excludes 0; sign test p={o['sign_test_p']:.3f}). {spread}"
+                 if o['separable'] else f'Not separable at this sample size. {spread}')
     if result['generation_differs']:
         lines.append('Generation settings differ between runs; the comparison includes decoding effects.')
     return '\n'.join(lines)
@@ -112,6 +123,6 @@ def compare(baseline: Path, candidate: Path, resamples: int = typer.Option(10000
             with output.open('x') as stream:
                 json.dump(result, stream, indent=2)
         typer.echo(json.dumps(result, indent=2) if json_output else render(result))
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         typer.echo(f'Compare failed: {exc}', err=True)
         raise typer.Exit(1)

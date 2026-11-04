@@ -63,7 +63,7 @@ See [installation channels](DISTRIBUTION.md) for npm/npx and Homebrew availabili
 delta compare baseline-quick.json edit-quick.json --output compare.json
 ```
 
-Examples are paired by `example_id` after sample scores are averaged, so both reports must come from the same workspace, model, and `--limit`. The last line states whether the 95% bootstrap interval of the overall difference excludes zero; if not, it reports the worst-case standard error of one run's mean at this sample size and the roughly 2.8 times larger difference two runs need to separate.
+Examples are paired by position within each benchmark after sample scores are averaged; both reports must share the same `validation_sha256`, so they must come from the same workspace, model, and `--limit`. The last line states whether the overall difference is separable (95% bootstrap interval excludes zero and the pooled sign test has p < 0.05); it also reports the worst-case standard error of one run's mean at this sample size and the roughly 2.8 times larger difference two runs need to separate.
 
 ## Contributions
 
