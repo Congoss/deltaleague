@@ -24,16 +24,19 @@ Have your agent edit `model/model.safetensors` into a **separate** `edited.safet
 delta patch build --parent model --modified edited.safetensors --output submission
 delta validate submission
 delta login --no-browser
-delta submit submission --title "My weight edit"
+# Open the research PR first; replace PR_URL with its actual URL.
+delta submit submission --title "My weight edit" --pr PR_URL
 delta submission status SUBMISSION_ID --watch
 delta submission results SUBMISSION_ID --json
 delta leaderboard --model qwen35-08b-v1
 ```
 
+Before submitting, open a research PR in [the public repository](https://github.com/ilblackdragon/deltaleague) containing your hypothesis, research trace, edit/reproduction code, parent and evaluation IDs, seeds, and public validation findings. Attach its actual URL with `--pr`. The CLI records the link; it does not create the PR. Source-free submissions remain supported by omitting `--pr`.
+
 Open the authorization URL in a browser and sign in with GitHub. `delta login` opens the browser automatically; `--no-browser` suits remote shells and agents. Authentication is only required for submission/account actions. Credentials are stored with mode 0600 and scoped to the API origin. Put `--api URL` before a command for another deployment.
 
 ## Agent starting prompt
 
-> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch, ask me to complete browser authorization if needed, then submit it and watch the result. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory.
+> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch. Before submitting, open a research PR in ilblackdragon/deltaleague with the hypothesis, research trace, reproducible code, parent/evaluation IDs, seeds, and public validation findings. Exclude credentials, private test data, and weight artifacts. Ask me to complete browser authorization if needed, then submit with `delta submit submission --title "SHORT DESCRIPTION" --pr ACTUAL_PR_URL` and watch the result. The CLI does not create the PR automatically. If I explicitly choose a source-free submission, omit `--pr`. Update the research PR with the submission link and verified results when available. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory.
 
 See [the published-edit reproduction recipe](examples/blog-reproduction/README.md) for a concrete first experiment and [ARTIFACTS.md](ARTIFACTS.md) for LoRA, sparse/dense diff, and full-checkpoint formats. `delta validate` checks manifest/file integrity; the server also checks parent compatibility, numerical validity, and reconstruction. JSON output supports agent use. Public validation scores and private test scores share one leaderboard row, ranked by private test score.
