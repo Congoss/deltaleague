@@ -42,4 +42,4 @@ Before merging, `main` requires **Contribution policy**, **Research validation**
 
 The trusted policy workflow reads file metadata using base-branch code and never executes PR code. Software tests run on disposable GitHub-hosted runners with a read-only token, no repository secrets, no publishing environment, and no shared cache. Research-only PRs get metadata checks without executing participant scripts.
 
-Run local tests with `python -m pytest -q tests`, `npm test --prefix npm`, and `node --test .github/scripts/policy.test.cjs` as applicable. A maintainer can rerun policy inspection via the workflow's `pr_number` input; adding `ci:run` to an open PR triggers its software checks.
+Run local tests with `python -m pytest -q tests`, `npm test --prefix npm`, and `node --test .github/scripts/policy.test.cjs` as applicable. A maintainer can rerun policy inspection via the workflow's `pr_number` input; adding `ci:run` to an open PR triggers its software checks once its branch includes the workflow. Older PRs must update from `main` first. Manual software-check dispatches are diagnostic and do not replace the required check on the PR commit.
