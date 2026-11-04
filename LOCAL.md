@@ -73,3 +73,16 @@ The JSON report contains per-benchmark scores, the equal-weight mean across sele
 The local scorer shares the platform's answer-scoring implementation: reasoning traces before `</think>` are excluded, math uses math-verify, and multiple-choice answers follow the same extraction rules. Configured samples use the same per-sample seeds. `--max-new-tokens` and `--thinking/--no-thinking` overrides are recorded explicitly.
 
 Scores remain **advisory local results**. Transformers, vLLM, device precision, and sampling implementations can differ even with the same seed. Compare candidates using the same local settings, then submit for the official validation and private test scores. Local evaluation does not upload results or assign a leaderboard rank.
+
+## Compare two runs
+
+```sh
+delta compare baseline-quick.json edit-quick.json --output compare.json
+delta compare baseline-quick.json edit-quick.json --resamples 10000 --seed 0 --json
+```
+
+`compare` reads two `delta evaluate` reports and their generation files (`generations_file`, else `<report>.generations.jsonl` beside the report). Sample scores are averaged per example, then examples are paired by `example_id` within each benchmark. It refuses reports with a different `config_id`, `validation_sha256`, or `model_id`, and reports whose benchmark or example sets differ; rerun both with the same `--limit` and `--benchmark`. Different `generation` settings are allowed and flagged `generation_differs`, so decoding changes can be compared.
+
+Per benchmark it reports `n`, both means, the difference, a paired percentile bootstrap 95% interval (examples resampled with replacement; `--resamples` defaults to 10,000, `--seed` to 0), wins, losses, and ties of the candidate, an exact two-sided sign test on the discordant pairs, truncation rates, mean output tokens, and the worst-case standard error `50/sqrt(n)` points. The overall difference uses the platform's equal-weight mean of benchmark means, bootstrapped jointly by resampling within each benchmark; its worst-case standard error is `100 * sqrt(sum(0.25 / n_b)) / B` points for `B` benchmarks. The overall result is `separable` when its interval excludes 0.
+
+`--json` prints the full structure and `--output` writes it; an existing output file is never overwritten. The comparison is advisory: official validation and private test scores are authoritative.
