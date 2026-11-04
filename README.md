@@ -4,10 +4,36 @@ The CLI and submission tools for [Delta League](https://deltaleague.ai): the ope
 
 Submit a patch. Prove an improvement. Advance the model.
 
-Repository: [ilblackdragon/deltaleague](https://github.com/ilblackdragon/deltaleague). This repository is private during launch preparation and is intended to become public. It contains no platform imports or private test data. The platform is maintained separately.
+Repository: [ilblackdragon/deltaleague](https://github.com/ilblackdragon/deltaleague). Private during launch preparation; intended to become public. The platform is maintained separately. This package contains no private test data.
 
-Clone `git@github.com:ilblackdragon/deltaleague.git`, enter the checkout, and install with `pip install .`, then use `delta login`. Python 3.12 or newer is required. Set `--api URL` before the command to choose another deployment. Credentials are stored locally with mode 0600 and are scoped to the API origin.
+## Quick start
 
-See [ARTIFACTS.md](ARTIFACTS.md) for the versioned submission contract. Use `delta --help`, `delta patch build --help`, and `delta submission --help` for commands. Status and result output is JSON for agent use. `delta validate` checks manifest/file integrity; the server additionally verifies tensor compatibility and reconstructs the checkpoint.
+Requires Python 3.12+. Clone this repository, then install `pip install .` in a virtual environment. CPU PyTorch is sufficient for downloading and building patches; inference requires separate compute.
 
-Public validation examples and scoring settings are exposed by `/api/v1/evaluation-configs/<id>`. Local scores are advisory; official scores come from the registered server evaluator. Private test content is not part of this package.
+```sh
+delta competition list
+delta competition init qwen35-08b-v1 --output experiment
+cd experiment
+```
+
+This selects a model competition and downloads its original checkpoint into `model/`, public examples into `validation.json`, and scoring/generation settings into `evaluation.json`. `delta-workspace.json` records the API, immutable parent version, and evaluation version. Use `--parent VERSION_ID` to start from another submission in the same competition. Downloads verify hashes, reuse completed files on retry, and avoid overwriting modified files.
+
+Have your agent edit `model/model.safetensors` into a **separate** `edited.safetensors` file. Preserve tensor names, shapes, and dtypes. Keep the parent unchanged. Then:
+
+```sh
+delta patch build --parent model --modified edited.safetensors --output submission
+delta validate submission
+delta login --no-browser
+delta submit submission --title "My weight edit"
+delta submission status SUBMISSION_ID --watch
+delta submission results SUBMISSION_ID --json
+delta leaderboard --model qwen35-08b-v1
+```
+
+Open the authorization URL in a browser and sign in with GitHub. `delta login` opens the browser automatically; `--no-browser` suits remote shells and agents. Authentication is only required for submission/account actions. Credentials are stored with mode 0600 and scoped to the API origin. Put `--api URL` before a command for another deployment.
+
+## Agent starting prompt
+
+> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch, ask me to complete browser authorization if needed, then submit it and watch the result. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory.
+
+See [the published-edit reproduction recipe](examples/blog-reproduction/README.md) for a concrete first experiment and [ARTIFACTS.md](ARTIFACTS.md) for LoRA, sparse/dense diff, and full-checkpoint formats. `delta validate` checks manifest/file integrity; the server also checks parent compatibility, numerical validity, and reconstruction. JSON output supports agent use. Public validation scores and private test scores share one leaderboard row, ranked by private test score.

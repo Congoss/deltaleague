@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from pathlib import Path
 import time
 import uuid
@@ -13,10 +14,12 @@ models_app = typer.Typer()
 model_app = typer.Typer()
 patch_app = typer.Typer()
 submission_app = typer.Typer()
+competition_app = typer.Typer(help="Discover model competitions and initialize a reproducible workspace.")
 app.add_typer(models_app, name="models")
 app.add_typer(model_app, name="model")
 app.add_typer(patch_app, name="patch")
 app.add_typer(submission_app, name="submission")
+app.add_typer(competition_app, name="competition")
 API = "https://deltaleague.ai"
 
 
@@ -36,10 +39,21 @@ def client():
 
 
 def call(method, path, **kwargs):
-    with client() as c:
-        r = c.request(method, "/api/v1/" + path, **kwargs)
+    try:
+        with client() as c:
+            r = c.request(method, "/api/v1/" + path, **kwargs)
+    except httpx.HTTPError:
+        typer.echo("Could not reach the Delta League API. Check the connection and --api URL, then retry.", err=True)
+        raise typer.Exit(1)
     if not r.is_success:
-        typer.echo(f"HTTP {r.status_code}: {r.text}", err=True)
+        if r.status_code in (401, 403):
+            typer.echo("Authentication or permission required. Run `delta login`, then check your account access.", err=True)
+        else:
+            typer.echo(f"API request failed (HTTP {r.status_code}).", err=True)
+            try:
+                show(r.json())
+            except ValueError:
+                pass
         raise typer.Exit(1)
     return r.json()
 
@@ -57,10 +71,11 @@ def options(api: str = typer.Option(os.getenv("DELTA_API", "https://deltaleague.
 
 
 @app.command()
-def login():
+def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the authorization URL without opening a browser.")):
     data = call("POST", "cli-auth")
     typer.echo(f"Authorize this CLI: {data['verification_url']}")
-    webbrowser.open(data["verification_url"])
+    if not no_browser:
+        webbrowser.open(data["verification_url"])
     for _ in range(120):
         time.sleep(data["interval"])
         result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]})
@@ -98,23 +113,103 @@ def models_list():
     show(call("GET", "models"))
 
 
-@model_app.command("pull")
-def model_pull(version: str, output: Path = typer.Option(Path("model"))):
+def download_artifact(artifact, output, force=False):
+    name = artifact["name"]
+    if Path(name).name != name:
+        raise typer.BadParameter("Invalid artifact filename from server")
+    path = output / name
+    if path.exists():
+        if path.stat().st_size == artifact["size_bytes"] and file_hash(path) == artifact["sha256"]:
+            typer.echo(f"Reusing verified {name}", err=True)
+            return
+        if not force:
+            raise typer.BadParameter(f"{path} exists with different contents. Use a new directory or --force to replace it.")
+    temporary = path.with_name(path.name + ".part")
+    typer.echo(f"Downloading {name} ({artifact['size_bytes'] / 1024**2:.1f} MiB)", err=True)
+    try:
+        with httpx.stream("GET", artifact["url"], timeout=300) as response:
+            response.raise_for_status()
+            total = 0
+            with temporary.open("wb") as target, typer.progressbar(length=artifact["size_bytes"], label=name, file=sys.stderr) as progress:
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > artifact["size_bytes"]:
+                        raise ValueError("download_size")
+                    target.write(chunk)
+                    progress.update(len(chunk))
+        if temporary.stat().st_size != artifact["size_bytes"] or file_hash(temporary) != artifact["sha256"]:
+            raise ValueError("download_integrity")
+        temporary.replace(path)
+    except (httpx.HTTPError, OSError, ValueError):
+        typer.echo(f"Download failed or integrity check failed for {name}. Retry the command; verified files are reused.", err=True)
+        raise typer.Exit(1)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def pull_model(version, output, force=False):
     data = call("GET", f"model-versions/{version}")
     output.mkdir(parents=True, exist_ok=True)
-    for f in data["files"]:
-        if Path(f["name"]).name != f["name"]:
-            raise typer.BadParameter("Invalid filename from server")
-        path = output / f["name"]
-        with httpx.stream("GET", f["url"], timeout=300) as response:
-            response.raise_for_status()
-            with path.open("wb") as target:
-                for chunk in response.iter_bytes():
-                    target.write(chunk)
-        if path.stat().st_size != f["size_bytes"] or file_hash(path) != f["sha256"]:
-            raise typer.BadParameter("Downloaded artifact integrity failure")
-    (output / "delta-model.json").write_text(json.dumps(data, indent=2))
+    metadata_path = output / "delta-model.json"
+    if metadata_path.exists():
+        previous = json.loads(metadata_path.read_text())
+        if previous.get("id") != data["id"]:
+            raise typer.BadParameter("This directory contains a different parent version. Choose a new output directory.")
+    for artifact in data["files"]:
+        download_artifact(artifact, output, force=force)
+    # Signed download URLs are temporary credentials, not reproducibility metadata.
+    data["files"] = [{k: f[k] for k in ("name", "sha256", "size_bytes")} for f in data["files"]]
+    metadata_path.write_text(json.dumps(data, indent=2))
+    return data
+
+
+@model_app.command("pull")
+def model_pull(version: str, output: Path = typer.Option(Path("model")), force: bool = False):
+    """Download a parent checkpoint. Reuses hash-verified files; --force replaces damaged/modified files."""
+    pull_model(version, output, force=force)
     typer.echo(str(output))
+
+
+@competition_app.command("list")
+def competitions_list():
+    rows = []
+    for model in call("GET", "models"):
+        board = call("GET", "leaderboard", params={"model": model["id"]})
+        parent = next((r["version_id"] for r in board["rows"] if r["parent_id"] is None), None)
+        rows.append({"model_id": model["id"], "name": model["name"], "config_id": board["config_id"],
+                     "default_parent_version_id": parent, "ready": bool(board["config_id"] and parent)})
+    show(rows)
+
+
+@competition_app.command("init")
+def competition_init(model: str, output: Path = typer.Option(Path("experiment")), parent: str | None = None):
+    """Pull a model parent, public validation data, and the active evaluation configuration."""
+    board = call("GET", "leaderboard", params={"model": model})
+    if not board["config_id"]:
+        raise typer.BadParameter("This model has no active competition. Run `delta competition list` to find available models.")
+    parent = parent or next((r["version_id"] for r in board["rows"] if r["parent_id"] is None), None)
+    if not parent:
+        raise typer.BadParameter("No original checkpoint is registered yet. Choose --parent VERSION_ID or wait for setup.")
+    version = call("GET", f"model-versions/{parent}")
+    if version["model_id"] != model:
+        raise typer.BadParameter("The selected parent belongs to a different model.")
+    config = call("GET", f"evaluation-configs/{board['config_id']}")
+    if not config.get("validation_download") or not config.get("validation_sha256"):
+        raise typer.BadParameter("The server does not provide a verifiable public validation download for this configuration yet.")
+    identity = {"api": API, "model_id": model, "parent_version_id": parent, "config_id": config["id"]}
+    workspace_path = output / "delta-workspace.json"
+    if workspace_path.exists():
+        previous = json.loads(workspace_path.read_text())
+        if any(previous.get(k) != value for k, value in identity.items()):
+            raise typer.BadParameter("This workspace belongs to another model, parent, API, or evaluation version. Use a new output directory.")
+    pull_model(parent, output / "model")
+    download_artifact({"name": "validation.json", "url": config["validation_download"],
+                       "sha256": config["validation_sha256"], "size_bytes": config["validation_size_bytes"]}, output)
+    public_config = {k: v for k, v in config.items() if k != "validation_download"}
+    (output / "evaluation.json").write_text(json.dumps(public_config, indent=2))
+    workspace_path.write_text(json.dumps(identity, indent=2))
+    show({**identity, "directory": str(output), "parent_directory": str(output / "model"),
+          "validation_file": str(output / "validation.json"), "validation_benchmarks": config["validation_names"]})
 
 
 @patch_app.command("build")
