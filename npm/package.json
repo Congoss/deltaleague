@@ -1,6 +1,6 @@
 {
   "name": "deltaleague",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run the Delta League Python CLI through npx",
   "bin": {"deltaleague": "bin/deltaleague.cjs"},
   "files": ["bin/", "README.md"],

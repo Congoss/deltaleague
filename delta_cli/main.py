@@ -75,6 +75,9 @@ def options(api: str = typer.Option(os.getenv("DELTA_API", "https://deltaleague.
 def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the authorization URL without opening a browser.")):
     data = call("POST", "cli-auth")
     typer.echo(f"Authorize this CLI: {data['verification_url']}")
+    if data.get("user_code"):
+        typer.echo(f"Then enter this code in the browser: {data['user_code']}")
+        typer.echo("Only enter it on a page you opened yourself. Never share this code.")
     if not no_browser:
         webbrowser.open(data["verification_url"])
     for _ in range(120):

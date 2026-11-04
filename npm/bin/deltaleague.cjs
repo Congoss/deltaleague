@@ -4,7 +4,7 @@ const {spawn, spawnSync} = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 function needsLocal(args) {
   for (let i = 0; i < args.length; i++) {
