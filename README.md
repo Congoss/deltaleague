@@ -8,7 +8,13 @@ Repository: [ilblackdragon/deltaleague](https://github.com/ilblackdragon/deltale
 
 ## Quick start
 
-Requires Python 3.12+. Clone this repository, then install `pip install .` in a virtual environment. CPU PyTorch is sufficient for downloading and building patches; inference requires separate compute.
+Requires Python 3.12+. Install from [PyPI](https://pypi.org/project/deltaleague/) in a virtual environment:
+
+```sh
+pip install deltaleague
+```
+
+For local inference and public evaluation, use `pip install 'deltaleague[local]'`. CPU PyTorch is sufficient for downloading and building patches. Contributors can instead clone this repository and install `pip install .`.
 
 ```sh
 delta competition list
@@ -37,7 +43,7 @@ Open the authorization URL in a browser and sign in with GitHub. `delta login` o
 
 ## Run and evaluate on your computer
 
-Install with `pip install ".[local]"` from this repository, then run these inside an initialized competition workspace:
+Install with `pip install 'deltaleague[local]'`, then run these inside an initialized competition workspace:
 
 ```sh
 delta run "What is 2 + 2?" --no-thinking
