@@ -23,9 +23,9 @@ function pythonCommand(env = process.env, check = spawnSync) {
   }
   throw new Error('Python 3.12+ is required. Install Python first (on Mac: brew install python@3.12), or set DELTA_PYTHON to its executable.');
 }
-function execute(binary, args) {
+function execute(binary, args, {install = false} = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, {stdio: 'inherit', shell: false});
+    const child = spawn(binary, args, {stdio: ['inherit', install ? 2 : 1, 2], shell: false});
     const forward = signal => { if (!child.killed) child.kill(signal); };
     const interrupt = () => forward('SIGINT');
     const terminate = () => forward('SIGTERM');
@@ -39,7 +39,7 @@ async function ready(directory, spec) {
   try { return (await fs.readFile(path.join(directory, '.delta-ready'), 'utf8')) === spec; }
   catch { return false; }
 }
-async function ensureEnvironment(python, directory, spec, run = execute) {
+async function ensureEnvironment(python, directory, spec, run = (binary, args) => execute(binary, args, {install: true})) {
   if (await ready(directory, spec)) return;
   await fs.mkdir(path.dirname(directory), {recursive: true});
   const lock = directory + '.lock';
