@@ -1,0 +1,5 @@
+include README.md ARTIFACTS.md LOCAL.md
+prune .github
+prune .delta
+prune var
+global-exclude *.safetensors *.bin *.pt *.pth .env .env.* auth.json .delta-upload.json *.generations.jsonl
