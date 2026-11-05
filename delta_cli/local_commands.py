@@ -85,7 +85,7 @@ def evaluate(workspace: Path = Path('.'), version: str | None = None,
         root, _, config, _ = local.read_workspace(workspace)
         tasks, names, full = local.public_examples(root, config, benchmark, limit)
         output = output.resolve()
-        generations = output.with_suffix('.generations.jsonl')
+        generations = local.generations_path(output)
         if output.exists() or generations.exists():
             raise ValueError('Output already exists. Choose a new --output path to preserve previous results.')
         output.parent.mkdir(parents=True, exist_ok=True)

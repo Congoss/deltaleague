@@ -8,6 +8,7 @@ import webbrowser
 import httpx
 import typer
 from .local_commands import run, evaluate
+from .compare import compare
 from .artifacts import build_sparse, validate_manifest, file_hash
 
 app = typer.Typer(help="Delta League: submit a patch, prove an improvement.", no_args_is_help=True)
@@ -283,3 +284,4 @@ def leaderboard(model: str | None = None):
 
 app.command("run")(run)
 app.command("evaluate")(evaluate)
+app.command("compare")(compare)

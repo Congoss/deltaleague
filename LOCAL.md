@@ -73,3 +73,16 @@ The JSON report contains per-benchmark scores, the equal-weight mean across sele
 The local scorer shares the platform's answer-scoring implementation: reasoning traces before `</think>` are excluded, math uses math-verify, and multiple-choice answers follow the same extraction rules. Configured samples use the same per-sample seeds. `--max-new-tokens` and `--thinking/--no-thinking` overrides are recorded explicitly.
 
 Scores remain **advisory local results**. Transformers, vLLM, device precision, and sampling implementations can differ even with the same seed. Compare candidates using the same local settings, then submit for the official validation and private test scores. Local evaluation does not upload results or assign a leaderboard rank.
+
+## Compare two runs
+
+```sh
+delta compare baseline-quick.json edit-quick.json --output compare.json
+delta compare baseline-quick.json edit-quick.json --resamples 10000 --seed 0 --json
+```
+
+`compare` reads two `delta evaluate` reports and the `<report>.generations.jsonl` file beside each. Sample scores are averaged per example, then examples are paired by position within each benchmark. It refuses reports with a different `config_id`, `validation_sha256`, or `model_id`, and reports whose benchmark or example sets differ; rerun both with the same `--limit` and `--benchmark`. Different `generation` settings are allowed and flagged `generation_differs`, so decoding changes can be compared.
+
+Per benchmark it reports `n`, both means, the difference, a paired percentile bootstrap 95% interval (examples resampled with replacement; `--resamples` defaults to 10,000, `--seed` to 0), wins, losses, and ties of the candidate, an exact two-sided sign test on the discordant pairs, truncation rates, mean output tokens, and `run_worst_case_se`, the worst-case standard error of one run's mean, `50/sqrt(n)` points. The overall difference uses the platform's equal-weight mean of benchmark means, bootstrapped jointly by resampling within each benchmark; its `run_worst_case_se` is `100 * sqrt(sum(0.25 / n_b)) / B` points for `B` benchmarks. The verdict always adds that two runs separate at about 2.8 times this value (`1.96 * sqrt(2)`). The overall result also carries pooled `wins`, `losses`, `ties`, and an exact two-sided `sign_test_p` across all paired examples, and is `separable` only when its interval excludes 0 and `sign_test_p` is below 0.05.
+
+`--json` prints the full structure and `--output` writes it; an existing output file is never overwritten. The comparison is advisory: official validation and private test scores are authoritative.
