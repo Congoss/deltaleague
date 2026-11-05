@@ -39,3 +39,7 @@ Local validation uses GSM8K indices 3 and 25 from the public manifest, with seed
 The candidate hit the cap on both prompts. The parent hit it on one. Neither scored a correct boxed answer. This tiny CPU check gives no evidence of an improvement and does not estimate leaderboard accuracy. An earlier 256-token pilot only finished its parent arm and is excluded from the paired comparison. The original checkpoint was used for gain verification. Its official private score is 18.6 versus the parent's 28.2 on this evaluation. The candidate has no official score.
 
 Local delta validate passed manifest and artifact hash verification.
+
+## Official submission
+
+Submission ID: 97a0aec5-1a1d-4b53-9ff9-4042295d9d31. Official evaluation is pending.
