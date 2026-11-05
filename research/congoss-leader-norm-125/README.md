@@ -42,4 +42,5 @@ Local delta validate passed manifest and artifact hash verification.
 
 ## Official submission
 
-Submission ID: 97a0aec5-1a1d-4b53-9ff9-4042295d9d31. Official evaluation is pending.
+[Verified submission](https://deltaleague.ai/submissions/97a0aec5-1a1d-4b53-9ff9-4042295d9d31/), version 86968401-a83c-43fc-808c-7e701d14a8c4. Rank at verification: 3. Private test: 26.0 vs 18.6 original and 28.2 parent. Public validation: 42.17 vs 41.83 original and 41.02 parent. Truncation: 54.8% vs 52.6% parent. All official scores use public-ladder500-8k-v2.
+
