@@ -250,16 +250,36 @@ def submit(path: Path, title: str = "Weight modification", pr: str | None = None
     state_path = path / ".delta-upload.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     fingerprint = __import__("hashlib").sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
-    if state.get("fingerprint") != fingerprint or state.get("api") != API:
+    if (state.get("fingerprint") != fingerprint or state.get("api") != API
+            or (state.get("pending_files") and state.get("expires_at", 0) <= time.time())):
+        # The server gives sessions a one-hour lifetime. Start the clock before the request.
+        expires_at = time.time() + 3600
         upload = call("POST", "upload-sessions", json={"manifest": manifest})
-        for f in upload["files"]:
+        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()), "fingerprint": fingerprint,
+                 "api": API, "pending_files": upload["files"], "expires_at": expires_at}
+        save_upload_state(state_path, state)
+    while state.get("pending_files"):
+        f = state["pending_files"][0]
+        try:
             file = path / f["name"]
             with file.open("rb") as stream:
                 response = httpx.put(f["url"], content=stream, headers={"Content-Length": str(file.stat().st_size)}, timeout=600)
                 response.raise_for_status()
-        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()), "fingerprint": fingerprint, "api": API}
-        state_path.write_text(json.dumps(state))
+        except httpx.HTTPError:
+            typer.echo("Upload failed. Session saved; rerun the same submit command to retry.", err=True)
+            raise typer.Exit(1)
+        state["pending_files"].pop(0)
+        save_upload_state(state_path, state)
     show(call("POST", "submissions", json={"upload_id": state["upload_id"], "title": title}, headers={"Idempotency-Key": state["idempotency_key"]}))
+
+
+def save_upload_state(path: Path, state: dict):
+    # Signed URLs are credentials. Replace atomically so an interrupted write keeps the old intent.
+    temporary = path.with_suffix(".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        json.dump(state, stream)
+    temporary.replace(path)
 
 
 @submission_app.command("status")

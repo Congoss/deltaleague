@@ -69,3 +69,70 @@ def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     assert result.exit_code == 1
     assert 'secret' not in result.output
     assert 'Could not reach' in result.output
+
+
+@pytest.mark.parametrize('failure', ['transfer', 'submission_response'])
+def test_submit_retries_saved_session(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr(main, 'validate', lambda path: None)
+    (tmp_path / 'manifest.json').write_text('{}')
+    (tmp_path / 'model.safetensors').write_bytes(b'weights')
+    state_path = tmp_path / '.delta-upload.json'
+    calls = []
+    puts = []
+
+    def call(method, path, **kwargs):
+        calls.append((path, kwargs))
+        if path == 'upload-sessions':
+            return {'id': 'upload-one', 'files': [artifact()]}
+        if failure == 'submission_response' and sum(p == 'submissions' for p, _ in calls) == 1:
+            raise main.typer.Exit(1)
+        return {'id': 'submission-one'}
+
+    def put(url, **kwargs):
+        state = json.loads(state_path.read_text())
+        assert state['upload_id'] == 'upload-one'
+        assert state['pending_files'][0]['url'] == url
+        assert state_path.stat().st_mode & 0o777 == 0o600
+        puts.append(kwargs['content'].read())
+        if failure == 'transfer' and len(puts) == 1:
+            raise httpx.ReadError('secret=hidden')
+        return httpx.Response(200, request=httpx.Request('PUT', url))
+
+    monkeypatch.setattr(main, 'call', call)
+    monkeypatch.setattr(main.httpx, 'put', put)
+    first = runner.invoke(main.app, ['submit', str(tmp_path)])
+    assert first.exit_code == 1
+    assert 'secret=hidden' not in first.output
+    original = json.loads(state_path.read_text())
+    second = runner.invoke(main.app, ['submit', str(tmp_path)])
+    assert second.exit_code == 0, second.output
+    assert sum(p == 'upload-sessions' for p, _ in calls) == 1
+    assert puts == [b'weights'] * (2 if failure == 'transfer' else 1)
+    assert json.loads(state_path.read_text())['pending_files'] == []
+    for path, kwargs in calls:
+        if path == 'submissions':
+            assert kwargs['headers']['Idempotency-Key'] == original['idempotency_key']
+
+
+def test_submit_replaces_expired_incomplete_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, 'validate', lambda path: None)
+    (tmp_path / 'manifest.json').write_text('{}')
+    (tmp_path / 'model.safetensors').write_bytes(b'weights')
+    state = {'upload_id': 'expired', 'api': main.API,
+             'fingerprint': hashlib.sha256(b'{}').hexdigest(),
+             'pending_files': [artifact()], 'expires_at': 1}
+    (tmp_path / '.delta-upload.json').write_text(json.dumps(state))
+    calls = []
+
+    def call(method, path, **kwargs):
+        calls.append(path)
+        if path == 'upload-sessions':
+            return {'id': 'new', 'files': [artifact()]}
+        assert kwargs['json']['upload_id'] == 'new'
+        return {'id': 'submission'}
+
+    monkeypatch.setattr(main, 'call', call)
+    monkeypatch.setattr(main.httpx, 'put', lambda url, **kwargs: httpx.Response(200, request=httpx.Request('PUT', url)))
+    result = runner.invoke(main.app, ['submit', str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert calls == ['upload-sessions', 'submissions']
