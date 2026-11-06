@@ -168,3 +168,42 @@ def test_leaderboard_version_download_is_used_for_inference(workspace, monkeypat
     result = CliRunner().invoke(main.app, ['run', 'Hi', '--workspace', str(root), '--version', selected, '--json'])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)['source_version_id'] == selected
+
+
+def test_patch_build_requires_checkpoint_in_inventory(workspace, monkeypatch):
+    root, _, _ = workspace
+    parent = root / 'model'
+    path = parent / 'delta-model.json'
+    metadata = json.loads(path.read_text())
+    metadata['files'] = []
+    path.write_text(json.dumps(metadata))
+    monkeypatch.setattr(main, 'build_sparse', lambda *args: pytest.fail('Unverified checkpoint used'))
+    result = CliRunner().invoke(main.app, ['patch', 'build', '--parent', str(parent), '--modified', str(root / 'edited.safetensors'), '--output', str(root / 'built')])
+    assert result.exit_code != 0
+    assert 'inventory' in result.output
+    assert not (root / 'built').exists()
+
+
+@pytest.mark.parametrize('fail_publish', [False, True])
+def test_publish_preserves_unrelated_backup_and_rolls_back(tmp_path, monkeypatch, fail_publish):
+    output, staging, unrelated = (tmp_path / name for name in ['submission', 'staging', '.submission.replaced'])
+    for directory in (output, staging, unrelated):
+        directory.mkdir()
+    (output / 'old').write_text('old')
+    (staging / 'new').write_text('new')
+    (unrelated / 'keep').write_text('keep')
+    rename = Path.rename
+    def failing_rename(path, target):
+        if path == staging:
+            raise OSError('cannot publish')
+        return rename(path, target)
+    if fail_publish:
+        monkeypatch.setattr(Path, 'rename', failing_rename)
+        with pytest.raises(OSError, match='cannot publish'):
+            main.publish_directory(staging, output)
+        assert (output / 'old').read_text() == 'old'
+    else:
+        main.publish_directory(staging, output)
+        assert (output / 'new').read_text() == 'new'
+    assert (unrelated / 'keep').read_text() == 'keep'
+    assert not list(tmp_path.glob('.submission.backup-*'))

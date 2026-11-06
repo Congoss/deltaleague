@@ -1,7 +1,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {classify, inspect} = require('./contribution-policy.cjs');
-const regular = path => ({path, type:'blob', mode:'100644',size:20});
+const regular = path => ({path, type:'blob', mode:'100644',size:20,sha:'blobsha'});
 function check(files, extra={}) {return classify({author:'alice',files:files.map(filename=>typeof filename==='string'?{filename,status:'modified'}:filename),...extra});}
 test('external root dot paths are blocked for additions, edits, deletions and both sides of renames',()=>{
  for(const status of ['added','modified','removed']) assert.ok(check([{filename:'.github/workflows/ci.yml',status}]).errors.length);
@@ -48,6 +48,7 @@ function githubFor({state='open', sha='abc', changed=1, permission='read', roleN
     compareCommits: async (args) => { github.compareArgs = args; return {data:{files, truncated:false}}; },
    },
    git:{
+    getBlob: async () => ({data:{encoding:"base64",size:20,content:Buffer.from("x".repeat(20)).toString("base64")}}),
     getTree: async (args) => { github.treeCalls++; github.treeArgs = args; return {data:{tree: tree || [], truncated}}; },
    },
   },
@@ -117,4 +118,21 @@ test('research rejects git lfs attributes and pointer blobs', () => {
  assert.ok(check([readme, attributes], {tree:[regular(readme), regular(attributes)]}).errors.some(error => error.includes('LFS')));
  const pointer = {...regular('research/alice-edit/weights.bin'), content:'version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 10\n'};
  assert.ok(check([readme, pointer.path], {tree:[regular(readme), pointer]}).errors.some(error => error.includes('pointer')));
+});
+
+test('inspect reads immutable blob contents to reject disguised LFS pointers', async () => {
+ const path = 'research/alice-edit/README.md';
+ const content = 'version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 10\n';
+ const github = githubFor({files:[{filename:path,status:'added'}], tree:[{...regular(path),size:Buffer.byteLength(content)}]});
+ github.rest.git.getBlob = async args => {
+  assert.equal(args.file_sha, 'blobsha');
+  return {data:{encoding:'base64',size:Buffer.byteLength(content),content:Buffer.from(content).toString('base64')}};
+ };
+ const result = await inspect(github, context, 1);
+ assert.ok(result.errors.some(error => error.includes('LFS pointer')));
+});
+
+test('maintainers can update another authors nested experiment', () => {
+ const paths = ['research/bob/edit/README.md', 'research/bob/edit/edit.py'];
+ assert.equal(check(paths, {tree:paths.map(regular),maintainer:true}).errors.length,0);
 });

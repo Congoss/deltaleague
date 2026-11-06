@@ -58,6 +58,7 @@ jobs:
           delta run --help
           delta evaluate --help
           npm test --prefix npm
+          node --test .github/scripts/policy.test.cjs
       - name: Research-only PR
         if: steps.scope.outputs.software == 'false'
         run: echo 'Research source is reviewed as data; it is not executed by CI.'

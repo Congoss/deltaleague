@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -38,7 +39,10 @@ def config_path():
 
 def credentials():
     p = config_path()
-    return json.loads(p.read_text()) if p.exists() else {}
+    saved = json.loads(p.read_text()) if p.exists() else {}
+    if not isinstance(saved, dict):
+        raise ValueError("Invalid credential configuration; run delta login again.")
+    return saved
 
 
 def client():
@@ -112,6 +116,14 @@ def public_validation(config):
     if (not isinstance(url, str) or not url or not isinstance(digest, str) or not digest or type(size) is not int or size <= 0
             or not isinstance(names, list) or not names or not all(isinstance(name, str) and name for name in names)):
         raise typer.BadParameter("The server does not provide a verifiable public validation download for this configuration yet.")
+    try:
+        parsed = urlsplit(url)
+        valid_url = parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password
+        parsed.port
+    except ValueError:
+        valid_url = False
+    if not valid_url or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise typer.BadParameter("Invalid public validation download URL or SHA-256 digest.")
     return {"name": "validation.json", "url": url, "sha256": digest, "size_bytes": size}, names
 
 
@@ -132,7 +144,11 @@ def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the
         webbrowser.open(data["verification_url"])
     for _ in range(120):
         time.sleep(data["interval"])
-        result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]}, retries=POLL_RETRIES)
+        try:
+            result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]}, retries=POLL_RETRIES)
+        except typer.Exit:
+            typer.echo("Sign-in did not finish. Authorization may have expired or been consumed. Run `delta login` again.", err=True)
+            raise
         if "token" in result:
             path = config_path()
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -285,20 +301,21 @@ def publish_directory(staging: Path, output: Path):
     if not output.exists():
         staging.rename(output)
         return
-    if not any(output.iterdir()):
-        output.rmdir()
-        staging.rename(output)
-        return
-    displaced = output.with_name(f".{output.name}.replaced")
-    if displaced.exists():
-        shutil.rmtree(displaced)
-    output.rename(displaced)
+    # Keep the old output in a directory owned by this invocation only.
+    backup = Path(tempfile.mkdtemp(prefix=f".{output.name}.backup-", dir=output.parent))
+    displaced = backup / "previous"
     try:
-        staging.rename(output)
-    except OSError:
-        displaced.rename(output)
-        raise
-    shutil.rmtree(displaced)
+        output.rename(displaced)
+        try:
+            staging.rename(output)
+        except OSError:
+            displaced.rename(output)
+            raise
+    finally:
+        # If rollback itself failed, retain the backup for manual recovery.
+        if not displaced.exists():
+            backup.rmdir()
+    shutil.rmtree(backup)
 
 
 @patch_app.command("build")
@@ -312,7 +329,9 @@ def patch_build(parent: Path = typer.Option(...), modified: Path = typer.Option(
         metadata = json.loads((parent / "delta-model.json").read_text())
         if not isinstance(metadata, dict) or any(key not in metadata for key in ("id", "content_hash", "model_id", "files")):
             raise ValueError("invalid parent metadata")
-        verify_artifact_bytes(parent, metadata["files"])
+        verified = verify_artifact_bytes(parent, metadata["files"])
+        if "model.safetensors" not in verified:
+            raise ValueError("Parent inventory must verify model.safetensors.")
         output.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
         manifest = build_sparse(parent / "model.safetensors", modified, staging, metadata["id"], metadata["content_hash"], metadata["model_id"])

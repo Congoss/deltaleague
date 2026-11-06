@@ -18,7 +18,7 @@ function classify({files, author, maintainer = false, tree = [], truncated = fal
   if (researchPaths.length) {
     const experimentKey = path => {
       const parts = path.split('/');
-      return parts.length >= 4 && parts[1].toLowerCase() === author.toLowerCase() ? `${parts[1]}/${parts[2]}` : parts[1];
+      return parts.length >= 4 && (parts[1].toLowerCase() === author.toLowerCase() || (maintainer && !tree.some(entry => entry.path === `research/${parts[1]}/README.md`))) ? `${parts[1]}/${parts[2]}` : parts[1];
     };
     const directories = [...new Set(researchPaths.map(experimentKey))];
     if (directories.length !== 1) errors.push('A research PR must change exactly one experiment directory.');
@@ -72,6 +72,20 @@ async function inspect(github, context, number) {
   if (files.some(f => [f.filename, f.previous_filename].some(p => p?.startsWith('research/') && p !== 'research/README.md'))) {
     const {data} = await github.rest.git.getTree({...repo, tree_sha: pr.head.sha, recursive: '1'});
     tree = data.tree; truncated ||= data.truncated;
+  }
+  const preliminary = classify({files, author: pr.user.login, maintainer, tree, truncated});
+  if (preliminary.category === 'research' && !preliminary.errors.length) {
+    // Read immutable blobs only after metadata passes the file and experiment limits.
+    const changed = new Set(files.filter(f => f.status !== 'removed').map(f => f.filename));
+    for (const entry of tree.filter(entry => changed.has(entry.path) && entry.type === 'blob')) {
+      const {data: blob} = await github.rest.git.getBlob({...repo, file_sha: entry.sha});
+      if (blob.encoding !== 'base64' || blob.size > 1024 * 1024 || typeof blob.content !== 'string') {
+        throw new Error('Invalid or oversized research blob');
+      }
+      const bytes = Buffer.from(blob.content, 'base64');
+      if (bytes.length !== entry.size || bytes.length !== blob.size) throw new Error('Research blob size mismatch');
+      entry.content = bytes.toString('utf8');
+    }
   }
   const {data: current} = await github.rest.pulls.get({...repo, pull_number: number});
   if (current.head.sha !== pr.head.sha) throw new Error('PR changed during inspection; rerun for the latest commit.');
