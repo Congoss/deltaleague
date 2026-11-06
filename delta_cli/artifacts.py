@@ -148,22 +148,24 @@ def reconstruct(parent_path, artifact_path, manifest, allowed_prefix=""):
 
 def build_sparse(parent, modified, output, parent_id, parent_hash, model_id):
     import torch
-    from safetensors.torch import load_file, save_file
+    from safetensors import safe_open
+    from safetensors.torch import save_file
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    before, after = load_file(str(parent)), load_file(str(modified))
-    if set(before) != set(after):
-        raise ValueError("tensor_inventory")
     tensors, mapping = {}, {}
-    for number, name in enumerate(sorted(before)):
-        a, b = before[name], after[name]
-        if a.shape != b.shape or a.dtype != b.dtype:
-            raise ValueError("tensor_shape_or_dtype")
-        idx = torch.nonzero(a.reshape(-1) != b.reshape(-1)).flatten()
-        if idx.numel():
-            ik, vk = f"t{number}.indices", f"t{number}.values"
-            tensors[ik], tensors[vk] = idx, b.reshape(-1)[idx]
-            mapping[name] = {"indices": ik, "values": vk}
+    with safe_open(str(parent), framework="pt") as before, safe_open(str(modified), framework="pt") as after:
+        if set(before.keys()) != set(after.keys()):
+            raise ValueError("tensor_inventory")
+        for number, name in enumerate(sorted(before.keys())):
+            a, b = before.get_tensor(name), after.get_tensor(name)
+            if a.shape != b.shape or a.dtype != b.dtype:
+                raise ValueError("tensor_shape_or_dtype")
+            idx = torch.nonzero(a.reshape(-1) != b.reshape(-1)).flatten()
+            if idx.numel():
+                ik, vk = f"t{number}.indices", f"t{number}.values"
+                tensors[ik], tensors[vk] = idx, b.reshape(-1)[idx]
+                mapping[name] = {"indices": ik, "values": vk}
+            del a, b
     if not tensors:
         raise ValueError("empty_patch")
     path = output / "weights.safetensors"
