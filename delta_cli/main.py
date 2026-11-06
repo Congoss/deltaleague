@@ -23,6 +23,7 @@ app.add_typer(patch_app, name="patch")
 app.add_typer(submission_app, name="submission")
 app.add_typer(competition_app, name="competition")
 API = "https://deltaleague.ai"
+POLL_RETRIES = 5
 
 
 def config_path():
@@ -40,25 +41,32 @@ def client():
     return httpx.Client(base_url=API, headers={"Authorization": f"Bearer {token}"} if token else {}, timeout=60)
 
 
+def retryable(response):
+    return response.status_code == 429 or response.status_code >= 500
+
+
 def request(method, path, retries=0, **kwargs):
     """One attempt, or a bounded retry of transport errors, 429s and 5xx responses."""
-    attempts = max(retries, 0) + 1
-    for attempt in range(attempts):
-        try:
-            with client() as c:
-                response = c.request(method, "/api/v1/" + path, **kwargs)
-        except httpx.HTTPError:
-            if attempt + 1 == attempts:
-                typer.echo("Could not reach the Delta League API. Check the connection and --api URL, then retry.", err=True)
-                raise typer.Exit(1)
-        else:
-            if response.status_code != 429 and response.status_code < 500 or attempt + 1 == attempts:
-                return response
-        time.sleep(2)
+    bound = max(retries, 0)
+    with client() as http:
+        for attempt in range(bound + 1):
+            try:
+                response = http.request(method, "/api/v1/" + path, **kwargs)
+            except httpx.HTTPError:
+                if attempt == bound:
+                    raise
+            else:
+                if attempt == bound or not retryable(response):
+                    return response
+            time.sleep(2)
 
 
 def call(method, path, retries=0, **kwargs):
-    r = request(method, path, retries, **kwargs)
+    try:
+        r = request(method, path, retries, **kwargs)
+    except httpx.HTTPError:
+        typer.echo("Could not reach the Delta League API. Check the connection and --api URL, then retry.", err=True)
+        raise typer.Exit(1)
     if not r.is_success:
         if r.status_code in (401, 403):
             typer.echo("Authentication or permission required. Run `delta login`, then check your account access.", err=True)
@@ -95,7 +103,7 @@ def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the
         webbrowser.open(data["verification_url"])
     for _ in range(120):
         time.sleep(data["interval"])
-        result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]}, retries=5)
+        result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]}, retries=POLL_RETRIES)
         if "token" in result:
             path = config_path()
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -278,7 +286,7 @@ def submit(path: Path, title: str = "Weight modification", pr: str | None = None
 @submission_app.command("status")
 def status(submission: str, watch: bool = False):
     while True:
-        data = call("GET", f"submissions/{submission}", retries=5 if watch else 0)
+        data = call("GET", f"submissions/{submission}", retries=POLL_RETRIES if watch else 0)
         show(data)
         if not watch or data["state"] in {"verified", "rejected", "failed", "canceled"}:
             return
