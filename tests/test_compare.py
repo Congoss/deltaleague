@@ -47,6 +47,12 @@ def test_sign_test_matches_the_binomial_tail_and_stays_linear():
     assert time.perf_counter() - started < 1
 
 
+def test_control_characters_in_a_benchmark_name_are_rejected(tmp_path):
+    report = write_run(tmp_path, 'x', {'a\nsep': [[1]]})
+    with pytest.raises(ValueError, match='control characters'):
+        compare.load(report)
+
+
 def test_identical_runs_are_not_separable(tmp_path):
     scores = {'a': [[1], [0], [1], [0]]}
     result = compare.compare_reports(write_run(tmp_path, 'x', scores), write_run(tmp_path, 'y', scores))

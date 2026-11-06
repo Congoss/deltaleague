@@ -24,6 +24,9 @@ def load(path):
         means = local.example_means(json.loads(l) for l in f if l.strip())
     if not means:
         raise ValueError('Generations file has no rows.')
+    for name in means:
+        if any(ord(character) < 32 or ord(character) == 127 for character in str(name)):
+            raise ValueError('Benchmark name contains control characters.')
     return report, means
 
 
