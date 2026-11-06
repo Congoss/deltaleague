@@ -232,11 +232,21 @@ def inspect(path: Path):
 
 @app.command()
 def validate(path: Path):
-    manifest = json.loads((path / "manifest.json").read_text())
-    validate_manifest(manifest)
-    for f in manifest["artifacts"]:
-        if file_hash(path / f["name"]) != f["sha256"] or (path / f["name"]).stat().st_size != f["size_bytes"]:
-            raise typer.BadParameter("Artifact integrity failure")
+    manifest_path = path / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        validate_manifest(manifest)
+        for artifact in manifest["artifacts"]:
+            name = artifact["name"]
+            if not isinstance(name, str) or Path(name).name != name:
+                raise typer.BadParameter(f"Artifact integrity failure: {manifest_path}")
+            file = path / name
+            if file_hash(file) != artifact["sha256"] or file.stat().st_size != artifact["size_bytes"]:
+                raise typer.BadParameter(f"Artifact integrity failure: {manifest_path}")
+    except typer.BadParameter:
+        raise
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise typer.BadParameter(f"{manifest_path}: {exc}") from None
     typer.echo("Manifest and artifact hashes are valid. Server checks parent compatibility and tensors.")
 
 

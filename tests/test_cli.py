@@ -61,6 +61,42 @@ def test_init_records_reproducible_workspace_without_signed_urls(tmp_path, monke
     assert 'different model' in result.output
 
 
+def test_validate_reports_malformed_submissions_without_a_traceback(tmp_path):
+    missing = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert missing.exit_code != 0 and 'Traceback' not in missing.output and 'manifest.json' in missing.output
+    submitted = runner.invoke(main.app, ['submit', str(tmp_path)])
+    assert submitted.exit_code != 0 and 'Traceback' not in submitted.output
+    (tmp_path / 'manifest.json').write_text('{')
+    broken = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert broken.exit_code != 0 and 'Traceback' not in broken.output
+    (tmp_path / 'manifest.json').write_text(json.dumps({'schema_version': 'nope'}))
+    schema = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert schema.exit_code != 0 and 'unsupported_schema' in schema.output and 'Traceback' not in schema.output
+    payload = b'weights'
+    manifest = {
+        'schema_version': 'delta.submission.v1', 'format': 'sparse-diff', 'operation': 'replace',
+        'reconstruction_version': 'delta-reconstruct-v1',
+        'parent_version_id': '00000000-0000-0000-0000-000000000002',
+        'parent_content_hash': 'a' * 64, 'model_config_id': 'tiny',
+        'tensors': {'layer.weight': {'indices': 't0.indices', 'values': 't0.values'}},
+        'artifacts': [{'name': 'weights.safetensors', 'sha256': hashlib.sha256(payload).hexdigest(), 'size_bytes': len(payload)}],
+    }
+    listed = dict(manifest, format=['sparse-diff'])
+    (tmp_path / 'manifest.json').write_text(json.dumps(listed))
+    typed = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert typed.exit_code != 0 and 'Traceback' not in typed.output
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    absent = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert absent.exit_code != 0 and 'Traceback' not in absent.output
+    (tmp_path / 'weights.safetensors').write_bytes(b'other')
+    mismatch = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert mismatch.exit_code != 0 and 'integrity' in mismatch.output and 'Traceback' not in mismatch.output
+    (tmp_path / 'weights.safetensors').write_bytes(payload)
+    valid = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert valid.exit_code == 0, valid.output
+    assert 'valid' in valid.output
+
+
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     def fail():
         raise httpx.ConnectError('https://user:secret@server.invalid')
