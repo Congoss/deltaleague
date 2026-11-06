@@ -1,4 +1,4 @@
-include README.md ARTIFACTS.md LOCAL.md
+include README.md ARTIFACTS.md LOCAL.md PUBLIC_EVALUATION.md
 prune .github
 prune .delta
 prune var

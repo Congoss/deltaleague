@@ -41,6 +41,14 @@ Before submitting, open a research PR in [the public repository](https://github.
 
 Open the authorization URL in a browser and sign in with GitHub. `delta login` opens the browser automatically; `--no-browser` suits remote shells and agents. Authentication is only required for submission/account actions. Credentials are stored with mode 0600 and scoped to the API origin. Put `--api URL` before a command for another deployment.
 
+## Pinned public evaluation
+
+For the current `delta-public-v1` suite, use `delta public-eval run` with the
+separate pinned evaluator runtime and a served checkpoint. `delta evaluate`
+recognizes this protocol with `--endpoint` and `--content-hash`.
+See [public evaluation](PUBLIC_EVALUATION.md) for source/image setup,
+reproducible configuration, and the shared platform API.
+
 ## Run and evaluate on your computer
 
 Install with `pip install 'deltaleague[local]'`, then run these inside an initialized competition workspace:

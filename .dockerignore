@@ -1,0 +1,13 @@
+**
+!pyproject.toml
+!MANIFEST.in
+!README.md
+!ARTIFACTS.md
+!LOCAL.md
+!PUBLIC_EVALUATION.md
+!delta_cli/
+!delta_cli/**
+!containers/
+!containers/public-evaluator.Dockerfile
+**/__pycache__/
+**/*.pyc
