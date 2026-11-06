@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -13,7 +14,7 @@ import typer
 from .local_commands import run, evaluate
 from .public_eval.cli import app as public_eval_app
 from .compare import compare
-from .artifacts import build_sparse, validate_manifest, file_hash
+from .artifacts import build_sparse, validate_manifest, file_hash, verify_artifact_bytes
 
 app = typer.Typer(help="Delta League: submit a patch, prove an improvement.", no_args_is_help=True)
 models_app = typer.Typer()
@@ -222,11 +223,51 @@ def competition_init(model: str, output: Path = typer.Option(Path("experiment"))
           "validation_file": str(output / "validation.json"), "validation_benchmarks": config["validation_names"]})
 
 
+def publish_directory(staging: Path, output: Path):
+    """Replace output with staging only after the new directory is complete."""
+    if not output.exists():
+        staging.rename(output)
+        return
+    if not any(output.iterdir()):
+        output.rmdir()
+        staging.rename(output)
+        return
+    displaced = output.with_name(f".{output.name}.replaced")
+    if displaced.exists():
+        shutil.rmtree(displaced)
+    output.rename(displaced)
+    try:
+        staging.rename(output)
+    except OSError:
+        displaced.rename(output)
+        raise
+    shutil.rmtree(displaced)
+
+
 @patch_app.command("build")
-def patch_build(parent: Path = typer.Option(...), modified: Path = typer.Option(...), output: Path = typer.Option(Path("submission"))):
+def patch_build(parent: Path = typer.Option(...), modified: Path = typer.Option(...), output: Path = typer.Option(Path("submission")),
+                force: bool = typer.Option(False, "--force", help="Replace an existing output directory.")):
     """Build an exact sparse replacement patch. Parent is a `delta model pull` directory."""
-    metadata = json.loads((parent / "delta-model.json").read_text())
-    manifest = build_sparse(parent / "model.safetensors", modified, output, metadata["id"], metadata["content_hash"], metadata["model_id"])
+    staging = None
+    try:
+        if output.exists() and any(output.iterdir()) and not force:
+            raise typer.BadParameter(f"{output} already exists. Choose a new directory or pass --force.")
+        metadata = json.loads((parent / "delta-model.json").read_text())
+        if not isinstance(metadata, dict) or any(key not in metadata for key in ("id", "content_hash", "model_id", "files")):
+            raise ValueError("invalid parent metadata")
+        verify_artifact_bytes(parent, metadata["files"])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+        manifest = build_sparse(parent / "model.safetensors", modified, staging, metadata["id"], metadata["content_hash"], metadata["model_id"])
+        publish_directory(staging, output)
+        staging = None
+    except typer.BadParameter:
+        raise
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from None
+    finally:
+        if staging and staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
     typer.echo(f"Built {len(manifest['tensors'])} modified tensors in {output}")
 
 
