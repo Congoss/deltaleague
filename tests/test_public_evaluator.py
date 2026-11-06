@@ -91,6 +91,18 @@ def evaluate(output, **kwargs):
                                   content_hash=CONTENT, output=output, **kwargs)
 
 
+def test_compare_consumes_completed_public_evaluator_reports(tmp_path, adapters):
+    baseline = evaluate(tmp_path / 'baseline')
+    evaluate(tmp_path / 'candidate')
+    result = CliRunner().invoke(app, ['compare', str(tmp_path / 'baseline/result.json'),
+        str(tmp_path / 'candidate/result.json'), '--resamples', '20', '--json'])
+    assert result.exit_code == 0, result.output
+    comparison = json.loads(result.stdout)
+    assert comparison['overall']['baseline_mean'] == baseline['validation_score']
+    assert comparison['overall']['ci95'] == [0, 0]
+    assert comparison['overall']['ties'] == 1110
+
+
 def test_complete_report_preserves_production_metric_selection(tmp_path, adapters):
     progress = []
     result = evaluate(tmp_path / 'result', progress=lambda done, total: progress.append((done, total)))

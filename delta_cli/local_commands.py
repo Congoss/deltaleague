@@ -83,7 +83,10 @@ def evaluate(workspace: Path = Path('.'), version: str | None = None,
              endpoint: str | None = None, served_model: str = 'candidate',
              content_hash: str | None = None, tokenizer: Path | None = None,
              concurrency: int = typer.Option(32, min=1, max=256)):
-    """Evaluate public validation. --limit caps examples per benchmark; output is never an official score."""
+    """Evaluate public validation; advisory only. Pinned suites need --endpoint and --content-hash.
+
+    Limits, checkpoint selectors and generation overrides apply only to legacy configurations.
+    """
     try:
         root, _, config, _ = local.read_workspace(workspace)
         if config.get('protocol_version') == 'delta-public-v1':

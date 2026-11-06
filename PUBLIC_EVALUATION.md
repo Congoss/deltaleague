@@ -103,6 +103,33 @@ Interrupted or failed evaluations retain a failed `run.json` and no completed
 result. For a retry, choose a new output directory. This is not an upload or an
 API submission and never changes the leaderboard.
 
+Compare two completed runs with:
+
+```sh
+delta compare baseline-results/result.json candidate-results/result.json \
+  --output comparison.json
+```
+
+The comparison validates both reports against the bundled public suite and pairs
+scores by benchmark and item ID, regardless of row order. It recomputes scores
+from the items and keeps the equal-weight mean of 18 benchmarks. Different
+checkpoint content hashes are expected; both runs must use the same pinned
+protocol and complete item coverage. Reference-check reports and mixed
+public/legacy reports are rejected. No generation sidecar is needed.
+
+Confidence intervals resample paired items within each benchmark. They do not
+measure variability across generation runs or correct for repeated candidate
+selection, and assume independence of items within benchmarks. The `separable`
+flag is an exploratory screen: the interval must exclude zero and the pooled
+item sign test must have p < 0.05 and agree in direction. Pooled signs weight
+items equally rather than benchmarks, so this is not a calibrated test of the
+benchmark-weighted mean. A negative screen does not establish equivalence.
+Use matching serving settings and retain each run's `run.json` for
+runtime provenance: the result contract does not attest endpoint weights or
+matching runtimes. Token/truncation summaries are unavailable (`null` in JSON,
+`n/a` in text), and `generation_differs` is `null` rather than claiming settings
+match. Legacy local report comparisons remain supported.
+
 ## Public image
 
 `containers/public-evaluator.Dockerfile` builds the same public package plus the

@@ -14,7 +14,7 @@ Requires Python 3.12+. Install from [PyPI](https://pypi.org/project/deltaleague/
 pip install deltaleague
 ```
 
-For local inference and public evaluation, use `pip install 'deltaleague[local]'`. CPU PyTorch is sufficient for downloading and building patches. Contributors can instead clone this repository and install `pip install .`.
+For portable local inference, use `pip install 'deltaleague[local]'`. The current public suite uses the separate `[public-eval]` environment described in [PUBLIC_EVALUATION.md](PUBLIC_EVALUATION.md). CPU PyTorch is sufficient for downloading and building patches. Contributors can instead clone this repository and install `pip install .`.
 
 ```sh
 delta competition list
@@ -51,13 +51,12 @@ reproducible configuration, and the shared platform API.
 
 ## Run and evaluate on your computer
 
-Install with `pip install 'deltaleague[local]'`, then run these inside an initialized competition workspace:
+Install with `pip install 'deltaleague[local]'` for prompt-level checks inside an initialized competition workspace:
 
 ```sh
 delta run "What is 2 + 2?" --no-thinking
-delta evaluate --limit 2 --max-new-tokens 256 --output baseline-quick.json
-delta evaluate --weights edited.safetensors --limit 2 --max-new-tokens 256 --output edit-quick.json
-# Any entry from `delta leaderboard` can be run or evaluated by version_id:
+delta run "What is 2 + 2?" --weights edited.safetensors --no-thinking
+# Any entry from `delta leaderboard` can be run by version_id:
 delta run "What is 2 + 2?" --version VERSION_ID --no-thinking
 ```
 
@@ -65,13 +64,25 @@ Macs use MPS where available; Linux uses CUDA where available; CPU is supported 
 
 See [installation channels](DISTRIBUTION.md) for npm/npx and Homebrew availability.
 
-### Compare two local evaluations
+### Compare two evaluations
+
+For completed public-evaluator runs:
 
 ```sh
-delta compare baseline-quick.json edit-quick.json --output compare.json
+delta compare baseline-results/result.json candidate-results/result.json --output compare.json
 ```
 
-Examples are paired by position within each benchmark after sample scores are averaged; both reports must share the same `validation_sha256`, so they must come from the same workspace, model, and `--limit`. The last line states whether the overall difference is separable (95% bootstrap interval excludes zero and the pooled sign test has p < 0.05); it also reports the worst-case standard error of one run's mean at this sample size and the roughly 2.8 times larger difference two runs need to separate.
+Public reports must cover the same complete pinned suite. Items are paired by
+benchmark and ID, and each of the 18 benchmarks receives equal weight. No
+`.generations.jsonl` files are needed. Checkpoint hashes identify the declared
+models; matching serving runtimes are not attested. See
+[PUBLIC_EVALUATION.md](PUBLIC_EVALUATION.md) for setup and report details.
+
+Legacy local report pairs remain supported with their generation sidecars; see
+[LOCAL.md](LOCAL.md#compare-two-runs). Public and legacy formats cannot be mixed.
+The command reports paired confidence intervals and an exploratory `separable`
+screen. Neither a positive screen nor a small interval establishes reproducibility
+across generation runs; a negative screen does not establish equivalence.
 
 ## Contributions
 
@@ -79,6 +90,6 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before openin
 
 ## Agent starting prompt
 
-> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Install the CLI local extra and use `delta run` for inference and `delta evaluate` for public validation; start with a bounded --limit and --max-new-tokens budget, recording the overrides. Use --version VERSION_ID to test a leaderboard entry, --weights for a full edited checkpoint, or --patch for a submission directory. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch. Before submitting, read CONTRIBUTING.md, keep the experiment in `research/<github-login>-<experiment>/`, and open a research-only PR in ilblackdragon/deltaleague with the hypothesis, research trace, reproducible code, parent/evaluation IDs, seeds, and public validation findings. Exclude credentials, private test data, and weight artifacts. Ask me to complete browser authorization if needed, then submit with `delta submit submission --title "SHORT DESCRIPTION" --pr ACTUAL_PR_URL` and watch the result. The CLI does not create the PR automatically. If I explicitly choose a source-free submission, omit `--pr`. Update the research PR with the submission link and verified results when available. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory. Use `delta compare` to check that a local gain is separable from noise before submitting.
+> Work on Delta League using its CLI. Run `delta competition list`, select `qwen35-08b-v1`, and initialize a fresh experiment with `delta competition init`. Read evaluation.json and validation.json. Use the CLI local extra and `delta run` for bounded prompt-level checks with --max-new-tokens; --version, --weights and --patch select local checkpoints. For protocol_version delta-public-v1, follow PUBLIC_EVALUATION.md: use the pinned public-eval environment, serve each checkpoint, and run the full suite with its own --content-hash. Do not pass legacy --limit, --weights or generation overrides to this evaluation. Compare the completed result.json files with `delta compare`. For legacy configurations only, use LOCAL.md for bounded `delta evaluate` runs. Keep the downloaded parent unchanged and save candidate weights separately. Record your hypothesis, changes, and public validation results. Build and validate a patch. Before submitting, read CONTRIBUTING.md, keep the experiment in `research/<github-login>-<experiment>/`, and open a research-only PR in ilblackdragon/deltaleague with the hypothesis, research trace, reproducible code, parent/evaluation IDs, seeds, and public validation findings. Exclude credentials, private test data, and weight artifacts. Ask me to complete browser authorization if needed, then submit with `delta submit submission --title "SHORT DESCRIPTION" --pr ACTUAL_PR_URL` and watch the result. The CLI does not create the PR automatically. If I explicitly choose a source-free submission, omit `--pr`. Update the research PR with the submission link and verified results when available. Never request private test examples or credentials. The server's official validation and private test scores are authoritative; local validation scores are advisory. Use paired differences and uncertainty to assess local evidence before submitting; the exploratory separable flag does not establish a reproducible gain.
 
 See [the published-edit reproduction recipe](examples/blog-reproduction/README.md) for a concrete first experiment and [ARTIFACTS.md](ARTIFACTS.md) for LoRA, sparse/dense diff, and full-checkpoint formats. `delta validate` checks manifest/file integrity; the server also checks parent compatibility, numerical validity, and reconstruction. JSON output supports agent use. Public validation scores and private test scores share one leaderboard row, ranked by private test score.
