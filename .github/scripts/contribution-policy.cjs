@@ -16,12 +16,20 @@ function classify({files, author, maintainer = false, tree = [], truncated = fal
   if (files.length > 3000 || truncated) errors.push('File inventory is incomplete or too large; split this PR.');
   if (researchPaths.length && otherPaths.length) errors.push('Split research and tooling/rules changes into separate PRs.');
   if (researchPaths.length) {
-    const directories = [...new Set(researchPaths.map(p => p.split('/')[1]))];
+    const experimentKey = path => {
+      const parts = path.split('/');
+      return parts.length >= 4 && parts[1].toLowerCase() === author.toLowerCase() ? `${parts[1]}/${parts[2]}` : parts[1];
+    };
+    const directories = [...new Set(researchPaths.map(experimentKey))];
     if (directories.length !== 1) errors.push('A research PR must change exactly one experiment directory.');
     for (const p of researchPaths) {
       const parts = p.split('/');
       if (parts.length < 3 || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(parts[1])) errors.push(`Invalid experiment path: ${p}`);
-      if (!maintainer && !parts[1].toLowerCase().startsWith(author.toLowerCase() + '-')) errors.push(`Research must stay in research/${author}-<experiment>/: ${p}`);
+      const login = author.toLowerCase();
+      const directory = parts[1].toLowerCase();
+      const owned = directory === login || directory.startsWith(login + '-');
+      if (!maintainer && !owned) errors.push(`Research must stay in research/${author}/<experiment>/ or research/${author}-<experiment>/: ${p}`);
+      if (/(^|\/)\.gitattributes$/.test(p) || p.endsWith('.lfsconfig')) errors.push(`Git LFS configuration cannot be committed in research: ${p}`);
       if (artifact.test(p) || sensitive.test(p)) errors.push(`Weights, credentials, private-marked data, and raw generations cannot be committed in research: ${p}`);
     }
     const entries = new Map(tree.map(entry => [entry.path, entry]));
@@ -40,6 +48,7 @@ function classify({files, author, maintainer = false, tree = [], truncated = fal
       for (const entry of contents) {
         size += entry.size || 0;
         if ((entry.size || 0) > 1024 * 1024) errors.push(`Research file exceeds 1 MiB: ${entry.path}`);
+        if (typeof entry.content === 'string' && entry.content.startsWith('version https://git-lfs.github.com/spec/v1')) errors.push(`Git LFS pointer cannot be committed in research: ${entry.path}`);
       }
       if (size > 5 * 1024 * 1024) errors.push(`Experiment exceeds 5 MiB: ${prefix}`);
     }
@@ -56,8 +65,10 @@ async function inspect(github, context, number) {
     const {data} = await github.rest.repos.getCollaboratorPermissionLevel({...repo, username: pr.user.login});
     maintainer = ['admin', 'maintain'].includes(data.role_name || data.permission);
   } catch (error) { if (error.status !== 404) throw error; }
-  const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: number, per_page: 100});
-  let tree = [], truncated = files.length !== pr.changed_files;
+  // Files come from the SHAs captured above, not the live pull-request file list.
+  const {data: compared} = await github.rest.repos.compareCommits({...repo, base: pr.base.sha, head: pr.head.sha});
+  const files = compared.files || [];
+  let tree = [], truncated = Boolean(compared.truncated) || files.length !== pr.changed_files || files.length >= 300;
   if (files.some(f => [f.filename, f.previous_filename].some(p => p?.startsWith('research/') && p !== 'research/README.md'))) {
     const {data} = await github.rest.git.getTree({...repo, tree_sha: pr.head.sha, recursive: '1'});
     tree = data.tree; truncated ||= data.truncated;
