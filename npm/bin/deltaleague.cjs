@@ -4,9 +4,10 @@ const {spawn, spawnSync} = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const VERSION = '0.1.1';
+const VERSION = require('../package.json').version;
 
 function needsLocal(args) {
+  if (args.includes('--help') || args.includes('-h')) return false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--api') { i++; continue; }
     if (args[i].startsWith('--api=')) continue;
@@ -86,4 +87,4 @@ async function main(args = process.argv.slice(2)) {
   process.exitCode = await execute(path.join(directory, 'bin', 'delta'), args);
 }
 if (require.main === module) main().catch(error => { console.error(`deltaleague: ${error.message}`); process.exitCode = 1; });
-module.exports = {needsLocal, pythonCommand, ensureEnvironment, execute};
+module.exports = {needsLocal, pythonCommand, ensureEnvironment, execute, VERSION};
