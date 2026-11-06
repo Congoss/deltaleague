@@ -170,3 +170,19 @@ def test_build_sparse_rejects_inventory_shape_and_empty_patch(tmp_path):
     manifest_out = build_sparse(parent, store(tmp_path, 'changed.safetensors', {'w': torch.tensor([1., 9.])}), built, PARENT, 'a' * 64, 'tiny')
     assert set(manifest_out['tensors']) == {'w'}
     assert (built / 'weights.safetensors').exists()
+
+
+@pytest.mark.parametrize('dtype,bits', [(torch.uint16, 16), (torch.uint32, 32), (torch.uint64, 64)])
+@pytest.mark.parametrize('operation', ['replace', 'add'])
+def test_sparse_unsigned_writes_preserve_dtype_and_untouched_bits(tmp_path, dtype, bits, operation):
+    maximum = 2 ** bits - 1
+    high = 2 ** (bits - 1)
+    before = torch.tensor([maximum, high, 4], dtype=dtype)
+    values = torch.tensor([maximum - 1, 0] if operation == 'replace' else [0, 3], dtype=dtype)
+    parent = store(tmp_path, 'unsigned-parent.safetensors', {'edit': before})
+    parent_bytes = parent.read_bytes()
+    patch = store(tmp_path, 'unsigned-patch.safetensors', {'i': torch.tensor([1, 2]), 'v': values})
+    result = reconstruct(parent, patch, manifest(operation=operation))['edit']
+    assert result.dtype == dtype
+    assert result.tolist() == ([maximum, maximum - 1, 0] if operation == 'replace' else [maximum, high, 7])
+    assert parent.read_bytes() == parent_bytes

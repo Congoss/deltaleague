@@ -151,10 +151,19 @@ def reconstruct(parent_path, artifact_path, manifest, allowed_prefix=""):
                 if indices.numel() and (indices[0] < 0 or indices[-1] >= original.numel() or not (indices[1:] > indices[:-1]).all()):
                     raise ValueError("invalid_sparse_indices")
                 updated = original.clone().reshape(-1)
+                # CPU indexed reads/writes are missing for wide unsigned dtypes.
+                # A same-width signed view scatters the bits without rounding them.
+                signed = {torch.uint16: torch.int16, torch.uint32: torch.int32,
+                          torch.uint64: torch.int64}.get(original.dtype)
+                target = updated.view(signed) if signed is not None else updated
                 if manifest.get("operation", "replace") == "replace":
-                    updated[indices] = values.to(dtype=original.dtype)
+                    replacement = values.to(dtype=original.dtype)
                 else:
-                    updated[indices] = (updated[indices].float() + values.float()).to(dtype=original.dtype)
+                    selected = target[indices]
+                    if signed is not None:
+                        selected = selected.view(original.dtype)
+                    replacement = (selected.float() + values.float()).to(dtype=original.dtype)
+                target[indices] = replacement.view(signed) if signed is not None else replacement
                 updated = updated.reshape(original.shape)
             else:
                 if values.shape != original.shape:

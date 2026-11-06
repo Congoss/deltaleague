@@ -7,7 +7,9 @@ const path = require('node:path');
 const VERSION = require('../package.json').version;
 
 function needsLocal(args) {
-  if (args.includes('--help') || args.includes('-h')) return false;
+  const separator = args.indexOf('--');
+  const options = separator < 0 ? args : args.slice(0, separator);
+  if (options.includes('--help')) return false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--api') { i++; continue; }
     if (args[i].startsWith('--api=')) continue;

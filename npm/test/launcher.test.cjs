@@ -12,7 +12,13 @@ test('selects local extra only for inference commands, after global API argument
   assert.equal(needsLocal(['submit','run']), false);
   assert.equal(needsLocal(['--help']), false);
   assert.equal(needsLocal(['run','--help']), false);
-  assert.equal(needsLocal(['evaluate','-h']), false);
+  assert.equal(needsLocal(['evaluate','--help']), false);
+  // Typer supports --help; -h is not an alias.
+  assert.equal(needsLocal(['evaluate','-h']), true);
+  assert.equal(needsLocal(['run','--','--help']), true);
+  assert.equal(needsLocal(['run','--','-h']), true);
+  assert.equal(needsLocal(['--api','https://example.test','run','--','--help']), true);
+  assert.equal(needsLocal(['run','--help','--','prompt']), false);
   assert.equal(VERSION, require('../package.json').version);
 });
 test('Python overrides are executed as one argument, never shell text', () => {

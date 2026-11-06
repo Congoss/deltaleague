@@ -2,6 +2,10 @@
 
 All channels run the same Python CLI published as `deltaleague`. The Python executable is `delta`; the npm launcher is named `deltaleague`.
 
+## Reconstruction deployment compatibility
+
+The platform verifier and CLI both import `delta_cli.artifacts.reconstruct`. Deploy the same implementation revision on both sides when releasing reconstruction changes. The sparse replacement precision fix preserves float64 values and wide integer bits that older implementations rounded through float32, while retaining the `delta-reconstruct-v1` identifier. Mixed revisions can therefore produce different content hashes for these dtypes. Current BF16/FP16 replacement behavior is unchanged. Sparse addition still computes selected sums in float32 and converts once to the parent dtype.
+
 ## PyPI — published
 
 ```sh
