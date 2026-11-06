@@ -35,7 +35,11 @@ def sign_test(wins, losses):
     n = wins + losses
     if not n:
         return 1.0
-    tail = sum(math.comb(n, i) for i in range(min(wins, losses) + 1))
+    # C(n, i+1) = C(n, i) * (n-i) / (i+1). One pass replaces a fresh comb() per term.
+    term = tail = 1
+    for i in range(min(wins, losses)):
+        term = term * (n - i) // (i + 1)
+        tail += term
     return min(1.0, 2 * tail / 2 ** n)
 
 
