@@ -119,7 +119,12 @@ public/legacy reports are rejected. No generation sidecar is needed.
 
 Confidence intervals resample paired items within each benchmark. They do not
 measure variability across generation runs or correct for repeated candidate
-selection. Use matching serving settings and retain each run's `run.json` for
+selection, and assume independence of items within benchmarks. The `separable`
+flag is an exploratory screen: the interval must exclude zero and the pooled
+item sign test must have p < 0.05 and agree in direction. Pooled signs weight
+items equally rather than benchmarks, so this is not a calibrated test of the
+benchmark-weighted mean. A negative screen does not establish equivalence.
+Use matching serving settings and retain each run's `run.json` for
 runtime provenance: the result contract does not attest endpoint weights or
 matching runtimes. Token/truncation summaries are unavailable (`null` in JSON,
 `n/a` in text), and `generation_differs` is `null` rather than claiming settings

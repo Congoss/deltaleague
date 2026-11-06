@@ -51,7 +51,7 @@ def test_public_pairing_weighting_and_checkpoint_identity(tmp_path):
 
 @pytest.mark.parametrize('problem', [
     'protocol', 'suite', 'reference', 'hash', 'missing_group', 'missing_item',
-    'duplicate', 'unknown_item', 'nan', 'infinity', 'boolean', 'range', 'shape',
+    'duplicate', 'unknown_item', 'nan', 'infinity', 'boolean', 'range', 'shape', 'huge_integer',
 ])
 def test_invalid_public_contract_fails_before_comparison(tmp_path, problem):
     base = write_public(tmp_path, 'base')
@@ -69,6 +69,7 @@ def test_invalid_public_contract_fails_before_comparison(tmp_path, problem):
     elif problem == 'duplicate': rows[-1] = rows[0]
     elif problem == 'unknown_item': rows[0]['id'] = 'unknown'
     elif problem == 'shape': report['public_validation'] = []
+    elif problem == 'huge_integer': rows[0]['score'] = 10 ** 1000
     else: rows[0]['score'] = {'nan': float('nan'), 'infinity': float('inf'), 'boolean': True, 'range': 1.1}[problem]
     cand.write_text(json.dumps(report))
     output = tmp_path / 'comparison.json'

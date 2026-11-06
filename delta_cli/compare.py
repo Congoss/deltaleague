@@ -71,6 +71,8 @@ def interval(values):
 
 
 def compare_reports(baseline, candidate, resamples=10000, seed=0):
+    if type(resamples) is not int or resamples < 1:
+        raise ValueError('resamples must be a positive integer.')
     (base, base_b), (cand, cand_b) = load(baseline), load(candidate)
     public = base.get('report_format') == 'public'
     if public != (cand.get('report_format') == 'public'):
@@ -108,6 +110,10 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
     pooled = [d for b in names for d in diffs[b]]
     wins, losses = sum(d > 0 for d in pooled), sum(d < 0 for d in pooled)
     sign_p = sign_test(wins, losses)
+    difference = statistics.mean(v['diff'] for v in benchmarks.values())
+    # Item-pooled signs and the benchmark-weighted mean have different weights.
+    # Opposing pooled evidence must not certify the direction of the mean.
+    sign_agrees = (wins - losses) * difference > 0
     return {'baseline': side(baseline, base), 'candidate': side(candidate, cand),
             'model_id': base.get('model_id'), 'config_id': base.get('config_id'),
             'validation_sha256': base.get('validation_sha256'),
@@ -116,12 +122,16 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
             'benchmarks': benchmarks,
             'overall': {'baseline_mean': statistics.mean(v['baseline_mean'] for v in benchmarks.values()),
                         'candidate_mean': statistics.mean(v['candidate_mean'] for v in benchmarks.values()),
-                        'diff': statistics.mean(v['diff'] for v in benchmarks.values()), 'ci95': ci,
+                        'diff': difference, 'ci95': ci,
                         'run_worst_case_se': 100 * math.sqrt(sum(.25 / v['n'] for v in benchmarks.values())) / len(names),
                         'wins': wins, 'losses': losses, 'ties': len(pooled) - wins - losses, 'sign_test_p': sign_p,
-                        'separable': (ci[0] > 0 or ci[1] < 0) and sign_p < .05},
+                        'pooled_sign_agrees': sign_agrees,
+                        'separable': (ci[0] > 0 or ci[1] < 0) and sign_p < .05 and sign_agrees},
             'resamples': resamples, 'seed': seed,
-            'note': NOTE + (' Public reports identify the declared checkpoint and pinned suite, but do not '
+            'note': NOTE + ' The separable flag is an exploratory screen, not a calibrated test of the '
+                          'benchmark-weighted mean; pooled signs weight items differently. Intervals assume '
+                          'independent items within benchmarks and do not correct for candidate selection.'
+                    + (' Public reports identify the declared checkpoint and pinned suite, but do not '
                             'attest endpoint weights or matching serving runtime. Token/truncation metrics '
                             'are unavailable. Intervals resample paired items within each benchmark and '
                             'do not measure run-to-run generation variability.' if public else '')}
@@ -139,13 +149,15 @@ def render(result):
     lines.append(f"overall {o['baseline_mean']:.1f} {o['candidate_mean']:.1f} {o['diff']:+.1f} [{o['ci95'][0]:+.1f}, {o['ci95'][1]:+.1f}]")
     se = o['run_worst_case_se']
     spread = (f"Worst-case standard error of one run's mean: {se:.2f} points; "
-              f"two runs separate at about 2.8\u00d7 that ({1.96 * math.sqrt(2) * se:.2f} points).")
-    lines.append(f"Candidate is separable from baseline (95% CI excludes 0; sign test p={o['sign_test_p']:.3f}). {spread}"
-                 if o['separable'] else f'Not separable at this sample size. {spread}')
+              f"independence-based unpaired 95% band: {1.96 * math.sqrt(2) * se:.2f} points "
+              '(not a threshold for this paired comparison).')
+    lines.append(f"Candidate is separable under the exploratory screen (95% CI excludes 0; "
+                 f"pooled sign test agrees in direction, p={o['sign_test_p']:.3f}). {spread}"
+                 if o['separable'] else f'Not separable at this sample size under the exploratory screen; '
+                                       f'this does not establish equivalence. {spread}')
     if result['generation_differs']:
         lines.append('Generation settings differ between runs; the comparison includes decoding effects.')
-    if result['generation_differs'] is None:
-        lines.append(result['note'])
+    lines.append(result['note'])
     return '\n'.join(lines)
 
 
@@ -162,6 +174,6 @@ def compare(baseline: Path, candidate: Path, resamples: int = typer.Option(10000
             with output.open('x') as stream:
                 json.dump(result, stream, indent=2)
         typer.echo(json.dumps(result, indent=2) if json_output else render(result))
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
         typer.echo(f'Compare failed: {exc}', err=True)
         raise typer.Exit(1)
