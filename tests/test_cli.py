@@ -61,6 +61,31 @@ def test_init_records_reproducible_workspace_without_signed_urls(tmp_path, monke
     assert 'different model' in result.output
 
 
+def test_logout_removes_credentials_when_the_api_call_fails(tmp_path, monkeypatch):
+    auth = tmp_path / 'auth.json'
+    auth.write_text(json.dumps({'api': 'https://deltaleague.ai', 'token': 'saved'}))
+    monkeypatch.setenv('DELTA_CONFIG', str(auth))
+
+    def client():
+        def handler(request):
+            return httpx.Response(401, json={'detail': 'expired'})
+        return httpx.Client(transport=httpx.MockTransport(handler), base_url='https://deltaleague.ai')
+
+    monkeypatch.setattr(main, 'client', client)
+    denied = runner.invoke(main.app, ['logout'])
+    assert denied.exit_code == 0, denied.output
+    assert 'Signed out' in denied.output and not auth.exists()
+    auth.write_text(json.dumps({'api': 'https://deltaleague.ai', 'token': 'saved'}))
+
+    def down():
+        raise httpx.ConnectError('https://user:secret@server.invalid')
+
+    monkeypatch.setattr(main, 'client', down)
+    offline = runner.invoke(main.app, ['logout'])
+    assert offline.exit_code == 0, offline.output
+    assert 'secret' not in offline.output and not auth.exists()
+
+
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     def fail():
         raise httpx.ConnectError('https://user:secret@server.invalid')

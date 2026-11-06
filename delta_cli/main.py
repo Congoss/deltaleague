@@ -98,8 +98,15 @@ def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the
 
 @app.command()
 def logout():
-    call("POST", "logout")
-    config_path().unlink(missing_ok=True)
+    path = config_path()
+    try:
+        # Best effort: an expired token or an unreachable API must not keep the local credential.
+        with client() as http:
+            http.post("/api/v1/logout")
+    except (httpx.HTTPError, OSError, ValueError):
+        pass
+    finally:
+        path.unlink(missing_ok=True)
     typer.echo("Signed out.")
 
 
