@@ -99,15 +99,23 @@ def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the
 @app.command()
 def logout():
     path = config_path()
+    revoked = False
     try:
-        # Best effort: an expired token or an unreachable API must not keep the local credential.
         with client() as http:
-            http.post("/api/v1/logout")
+            response = http.post("/api/v1/logout")
+        # 401 means the token is already invalid, so the local delete finishes the sign-out.
+        revoked = response.is_success or response.status_code == 401
     except (httpx.HTTPError, OSError, ValueError):
-        pass
-    finally:
+        revoked = False
+    try:
         path.unlink(missing_ok=True)
-    typer.echo("Signed out.")
+    except OSError:
+        typer.echo("Could not remove the local credential file.", err=True)
+        raise typer.Exit(1)
+    if revoked:
+        typer.echo("Signed out.")
+    else:
+        typer.echo("Removed local credentials. The server session could not be revoked.", err=True)
 
 
 @app.command()

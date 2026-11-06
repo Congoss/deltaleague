@@ -83,6 +83,7 @@ def test_logout_removes_credentials_when_the_api_call_fails(tmp_path, monkeypatc
     monkeypatch.setattr(main, 'client', down)
     offline = runner.invoke(main.app, ['logout'])
     assert offline.exit_code == 0, offline.output
+    assert 'could not be revoked' in offline.output and 'Signed out' not in offline.output
     assert 'secret' not in offline.output and not auth.exists()
 
 
