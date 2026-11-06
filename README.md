@@ -41,7 +41,7 @@ Before submitting, open a research PR in [the public repository](https://github.
 
 Open the authorization URL in a browser and sign in with GitHub. `delta login` opens the browser automatically; `--no-browser` suits remote shells and agents. Authentication is only required for submission/account actions. Credentials are stored with mode 0600 and scoped to the API origin. Put `--api URL` before a command for another deployment.
 
-If a transfer fails, rerun the same `delta submit` command. Version 0.1.2 saves `.delta-upload.json` before uploading and retries unfinished files using the same session. Keep this file private: while a transfer is pending, it contains signed upload URLs. Unfinished sessions expire after one hour; a later retry creates a new session. The two-session upload limit is separate from the submission quota shown by `delta quota`.
+If a transfer fails, rerun the same `delta submit` command. Version 0.1.2 saves `.delta-upload.json` before uploading and retries unfinished files using the same session. Keep this file private: while a transfer is pending, it contains signed upload URLs. Unfinished sessions expire after one hour; a later retry creates a new session. The two-session upload limit is separate from the submission quota shown by `delta quota`. Uploads use only manifest artifact names, reject redirects and other non-2xx responses, and retain retry state on transfer failure. Once submission starts, retry with the original title: the server may already have finalized the session even if its response was lost.
 
 ## Pinned public evaluation
 
