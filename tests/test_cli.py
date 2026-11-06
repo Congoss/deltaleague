@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from delta_cli import main
@@ -516,7 +517,7 @@ def test_logout_removes_credentials_when_the_api_call_fails(tmp_path, monkeypatc
 
 def test_validate_reports_malformed_submissions_without_a_traceback(tmp_path):
     missing = runner.invoke(main.app, ['validate', str(tmp_path)])
-    assert missing.exit_code != 0 and 'Traceback' not in missing.output and 'manifest.json' in ''.join(missing.output.replace('│', '').split())
+    assert missing.exit_code != 0 and 'Traceback' not in missing.output and 'manifest.json' in ''.join(unstyle(missing.output).replace('│', '').split())
     submitted = runner.invoke(main.app, ['submit', str(tmp_path)])
     assert submitted.exit_code != 0 and 'Traceback' not in submitted.output
     (tmp_path / 'manifest.json').write_text('{')

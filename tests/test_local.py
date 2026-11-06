@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from click import unstyle
 import torch
 from safetensors.torch import load_file, save_file
 from typer.testing import CliRunner
@@ -31,7 +32,7 @@ def test_patch_build_rejects_a_modified_parent_and_an_existing_output(workspace)
     assert result.exit_code == 0, result.output
     assert (output / 'manifest.json').exists()
     again = CliRunner().invoke(main.app, args)
-    assert again.exit_code != 0 and 'already exists' in again.output
+    assert again.exit_code != 0 and 'alreadyexists' in ''.join(unstyle(again.output).replace('│', '').split())
     previous = (output / 'manifest.json').read_bytes()
     (output / 'stale.txt').write_text('keep')
     save_file({'layer.weight': torch.tensor([1., 2.])}, str(modified))
