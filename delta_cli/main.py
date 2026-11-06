@@ -9,7 +9,7 @@ import httpx
 import typer
 from .local_commands import run, evaluate
 from .compare import compare
-from .artifacts import build_sparse, validate_manifest, file_hash
+from .artifacts import build_sparse, validate_manifest, file_hash, verify_artifact_bytes
 
 app = typer.Typer(help="Delta League: submit a patch, prove an improvement.", no_args_is_help=True)
 models_app = typer.Typer()
@@ -218,10 +218,19 @@ def competition_init(model: str, output: Path = typer.Option(Path("experiment"))
 
 
 @patch_app.command("build")
-def patch_build(parent: Path = typer.Option(...), modified: Path = typer.Option(...), output: Path = typer.Option(Path("submission"))):
+def patch_build(parent: Path = typer.Option(...), modified: Path = typer.Option(...), output: Path = typer.Option(Path("submission")),
+                force: bool = typer.Option(False, "--force", help="Replace an existing output directory.")):
     """Build an exact sparse replacement patch. Parent is a `delta model pull` directory."""
-    metadata = json.loads((parent / "delta-model.json").read_text())
-    manifest = build_sparse(parent / "model.safetensors", modified, output, metadata["id"], metadata["content_hash"], metadata["model_id"])
+    try:
+        if output.exists() and any(output.iterdir()) and not force:
+            raise typer.BadParameter(f"{output} already exists. Choose a new directory or pass --force.")
+        metadata = json.loads((parent / "delta-model.json").read_text())
+        verify_artifact_bytes(parent, metadata["files"])
+        manifest = build_sparse(parent / "model.safetensors", modified, output, metadata["id"], metadata["content_hash"], metadata["model_id"])
+    except typer.BadParameter:
+        raise
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise typer.BadParameter(str(exc)) from None
     typer.echo(f"Built {len(manifest['tensors'])} modified tensors in {output}")
 
 

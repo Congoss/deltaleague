@@ -1,5 +1,6 @@
 import io
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,46 @@ from typer.testing import CliRunner
 
 from delta_cli import local, main
 from delta_cli.artifacts import build_sparse, file_hash
+
+
+def test_patch_build_rejects_a_modified_parent_and_an_existing_output(workspace):
+    root, _, _ = workspace
+    parent = root / 'model'
+    modified = root / 'edited.safetensors'
+    save_file({'layer.weight': torch.tensor([1., 9.])}, str(modified))
+    config = parent / 'config.json'
+    original = config.read_text()
+    config.write_text('changed')
+    output = root / 'built'
+    args = ['patch', 'build', '--parent', str(parent), '--modified', str(modified), '--output', str(output)]
+    result = CliRunner().invoke(main.app, args)
+    assert result.exit_code != 0
+    assert 'changed' in result.output and 'Traceback' not in result.output
+    assert not output.exists()
+    config.write_text(original)
+    result = CliRunner().invoke(main.app, args)
+    assert result.exit_code == 0, result.output
+    assert (output / 'manifest.json').exists()
+    again = CliRunner().invoke(main.app, args)
+    assert again.exit_code != 0 and 'already exists' in again.output
+    forced = CliRunner().invoke(main.app, args + ['--force'])
+    assert forced.exit_code == 0, forced.output
+
+
+def test_parent_checkpoint_is_hashed_once(workspace, monkeypatch):
+    root, metadata, _ = workspace
+    calls = []
+    real = file_hash
+
+    def wrapped(path):
+        calls.append(Path(path).name)
+        return real(path)
+
+    monkeypatch.setattr(local, 'file_hash', wrapped)
+    monkeypatch.setattr('delta_cli.artifacts.file_hash', wrapped)
+    with local.model_directory(root, metadata):
+        pass
+    assert calls.count('model.safetensors') == 1
 
 
 def test_patch_overlay_reconstructs_without_mutating_parent(workspace):
