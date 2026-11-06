@@ -31,7 +31,7 @@ test('classification comes from paths rather than labels or PR title',()=>{
  assert.equal(check(['PROTOCOL.md']).category,'competition');
 });
 
-function githubFor({state='open', sha='abc', changed=1, permission='read', permissionStatus, files, tree, secondSha}={}) {
+function githubFor({state='open', sha='abc', changed=1, permission='read', roleName, permissionStatus, files, tree, truncated=false, secondSha}={}) {
  const pr = {state, user:{login:'alice'}, head:{sha}, changed_files:changed};
  let reads = 0;
  const github = {
@@ -43,11 +43,11 @@ function githubFor({state='open', sha='abc', changed=1, permission='read', permi
    repos:{
     getCollaboratorPermissionLevel: async () => {
      if (permissionStatus) throw Object.assign(new Error('permission'), {status: permissionStatus});
-     return {data:{permission}};
+     return {data: roleName ? {role_name: roleName} : {permission}};
     },
    },
    git:{
-    getTree: async () => { github.treeCalls++; return {data:{tree: tree || [], truncated:false}}; },
+    getTree: async (args) => { github.treeCalls++; github.treeArgs = args; return {data:{tree: tree || [], truncated}}; },
    },
   },
   paginate: async () => files,
@@ -77,4 +77,26 @@ test('inspect fails closed on closed PRs, permission 404, and head-change', asyn
  const recorded = await inspect(fetched, context, 1);
  assert.equal(recorded.category, 'research');
  assert.equal(fetched.treeCalls, 1);
+});
+
+test('inspect lets a maintainer edit hidden paths and still blocks write access', async () => {
+ const dot = [{filename:'.github/workflows/ci.yml', status:'modified'}];
+ assert.equal((await inspect(githubFor({permission:'admin', files:dot}), context, 1)).errors.length, 0);
+ assert.equal((await inspect(githubFor({roleName:'maintain', files:dot}), context, 1)).errors.length, 0);
+ const write = await inspect(githubFor({permission:'write', files:dot}), context, 1);
+ assert.ok(write.errors.some(error => error.includes('.github/workflows/ci.yml')));
+});
+
+test('inspect fails closed when the git tree is truncated', async () => {
+ const research = [{filename:'research/alice-edit/README.md', status:'added'}];
+ const result = await inspect(githubFor({files:research, changed:1, truncated:true, tree:[regular('research/alice-edit/README.md')]}), context, 1);
+ assert.ok(result.errors.some(error => error.includes('incomplete')));
+});
+
+test('inspect fetches the head tree when a research path is renamed away', async () => {
+ const files = [{filename:'docs/x.md', previous_filename:'research/alice-edit/x.md', status:'renamed'}];
+ const github = githubFor({files, changed:1, sha:'headsha', tree:[regular('research/alice-edit/README.md'), regular('docs/x.md')]});
+ await inspect(github, context, 1);
+ assert.equal(github.treeCalls, 1);
+ assert.equal(github.treeArgs.tree_sha, 'headsha');
 });
