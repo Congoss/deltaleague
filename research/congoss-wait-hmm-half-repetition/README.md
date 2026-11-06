@@ -26,3 +26,7 @@ Download the registered parent and donor with delta competition init qwen35-08b-
 Artifact SHA-256: 8df345cb9f64055828377cc7b4036469c37622ac0ce221016d087aa7f2ef7eff.
 
 For paired.py, put the parent and control artifact in sibling delta-leader/model and delta-leader/submission-wait-hmm directories, and the donor in sibling delta-dose/experiment/model. Save the relevant Hugging Face dataset viewer responses in source-math.json, source-logic.json and source-code.json beside paired.py. Use Python 3.13, Torch 2.15, Transformers 5.22.1 and safetensors 0.8.
+
+## Official submission
+
+[Delta League submission](https://deltaleague.ai/submissions/c661dabd-7b63-43c5-89d3-e003535b5a33/). Evaluation pending.
