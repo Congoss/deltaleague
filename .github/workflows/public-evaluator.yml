@@ -1,0 +1,75 @@
+name: Build public evaluator image
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish public evaluator to GHCR (main only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free space for CUDA image
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          docker image prune -af
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: image
+        with:
+          context: .
+          file: containers/public-evaluator.Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ghcr.io/ilblackdragon/deltaleague-public-evaluator:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/ilblackdragon/deltaleague
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Smoke test packaged protocol and sandbox
+        env:
+          IMAGE: ghcr.io/ilblackdragon/deltaleague-public-evaluator:${{ github.sha }}
+        run: |
+          docker run --rm "$IMAGE" config
+          docker run --rm --entrypoint /opt/eval/bin/python "$IMAGE" -c 'from delta_cli.public_eval.wasi import sandbox; assert sandbox("assert 1 + 1 == 2")["passed"]'
+      - name: Verify public reference contracts without network or GPU
+        env:
+          IMAGE: ghcr.io/ilblackdragon/deltaleague-public-evaluator:${{ github.sha }}
+        run: |
+          docker run --rm --network none --entrypoint /opt/eval/bin/python "$IMAGE" -m delta_cli.public_eval.verify --output /tmp/protocol-checks
+          docker run --rm --network none --entrypoint /opt/eval/bin/python "$IMAGE" -c 'from pathlib import Path; from delta_cli.public_eval.suite import manifest; from delta_cli.public_eval.coding import run; suite=manifest(); reports=[run(suite, group, "", "reference-fixtures", "", Path("/tmp")/(group+".json"), reference_check=True, sandbox_backend="wasi") for group in suite["code"]]; assert all(r["score"] == 1 for r in reports)'
+      - name: Publish immutable image
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/ilblackdragon/deltaleague-public-evaluator:${{ github.sha }}
+        run: |
+          docker push "$IMAGE"
+          docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE" | tee public-evaluator-image.txt
+      - name: Require anonymous pull access
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/ilblackdragon/deltaleague-public-evaluator:${{ github.sha }}
+        run: |
+          # GHCR packages may start private even for public repositories. Fail until a maintainer makes this package public.
+          temp_config=$(mktemp -d)
+          trap 'rm -rf "$temp_config"' EXIT
+          DOCKER_CONFIG="$temp_config" docker manifest inspect "$IMAGE" >/dev/null
+      - uses: actions/upload-artifact@v4
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        with:
+          name: public-evaluator-image
+          path: public-evaluator-image.txt
