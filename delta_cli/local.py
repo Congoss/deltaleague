@@ -8,7 +8,7 @@ import statistics
 import tempfile
 import time
 
-from .artifacts import file_hash, reconstruct, validate_manifest
+from .artifacts import file_hash, reconstruct, validate_manifest, verify_artifact_bytes
 from .scoring import score_answer
 
 
@@ -29,17 +29,14 @@ def model_directory(workspace, metadata, weights=None, patch=None, parent=None):
     if weights and patch:
         raise ValueError('Choose either --weights or --patch.')
     parent = parent or workspace / 'model'
-    for artifact in metadata['files']:
-        name = artifact['name']
-        if Path(name).name != name:
-            raise ValueError('Invalid model artifact filename.')
-        if name == 'model.safetensors' and weights:
-            continue
-        path = parent / name
-        if path.stat().st_size != artifact['size_bytes'] or file_hash(path) != artifact['sha256']:
-            raise ValueError(f'Parent artifact changed: {name}. Keep the parent untouched and use --weights or --patch.')
+    files = metadata['files']
+    if weights:
+        files = [artifact for artifact in files if not (isinstance(artifact, dict) and artifact.get('name') == 'model.safetensors')]
+    digests = verify_artifact_bytes(parent, files)
     if not weights and not patch:
-        yield parent, {'kind': 'parent', 'weights_sha256': file_hash(parent / 'model.safetensors')}
+        if 'model.safetensors' not in digests:
+            raise ValueError('Parent artifact changed: model.safetensors. Keep the parent untouched.')
+        yield parent, {'kind': 'parent', 'weights_sha256': digests['model.safetensors']}
         return
     with tempfile.TemporaryDirectory(prefix='delta-local-') as temp:
         target = Path(temp)

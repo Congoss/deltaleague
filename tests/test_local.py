@@ -1,14 +1,65 @@
 import io
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from click import unstyle
 import torch
 from safetensors.torch import load_file, save_file
 from typer.testing import CliRunner
 
 from delta_cli import local, main
 from delta_cli.artifacts import build_sparse, file_hash
+
+
+def test_patch_build_rejects_a_modified_parent_and_an_existing_output(workspace):
+    root, _, _ = workspace
+    parent = root / 'model'
+    modified = root / 'edited.safetensors'
+    save_file({'layer.weight': torch.tensor([1., 9.])}, str(modified))
+    config = parent / 'config.json'
+    original = config.read_text()
+    config.write_text('changed')
+    output = root / 'built'
+    args = ['patch', 'build', '--parent', str(parent), '--modified', str(modified), '--output', str(output)]
+    result = CliRunner().invoke(main.app, args)
+    assert result.exit_code != 0
+    assert 'changed' in result.output and 'Traceback' not in result.output
+    assert not output.exists()
+    config.write_text(original)
+    result = CliRunner().invoke(main.app, args)
+    assert result.exit_code == 0, result.output
+    assert (output / 'manifest.json').exists()
+    again = CliRunner().invoke(main.app, args)
+    assert again.exit_code != 0 and 'alreadyexists' in ''.join(unstyle(again.output).replace('│', '').split())
+    previous = (output / 'manifest.json').read_bytes()
+    (output / 'stale.txt').write_text('keep')
+    save_file({'layer.weight': torch.tensor([1., 2.])}, str(modified))
+    failed = CliRunner().invoke(main.app, args + ['--force'])
+    assert failed.exit_code != 0 and 'Traceback' not in failed.output
+    assert (output / 'manifest.json').read_bytes() == previous
+    assert (output / 'stale.txt').read_text() == 'keep'
+    save_file({'layer.weight': torch.tensor([1., 9.])}, str(modified))
+    forced = CliRunner().invoke(main.app, args + ['--force'])
+    assert forced.exit_code == 0, forced.output
+    assert not (output / 'stale.txt').exists()
+
+
+def test_parent_checkpoint_is_hashed_once(workspace, monkeypatch):
+    root, metadata, _ = workspace
+    calls = []
+    real = file_hash
+
+    def wrapped(path):
+        calls.append(Path(path).name)
+        return real(path)
+
+    monkeypatch.setattr(local, 'file_hash', wrapped)
+    monkeypatch.setattr('delta_cli.artifacts.file_hash', wrapped)
+    with local.model_directory(root, metadata):
+        pass
+    assert calls.count('model.safetensors') == 1
 
 
 def test_patch_overlay_reconstructs_without_mutating_parent(workspace):
@@ -118,3 +169,42 @@ def test_leaderboard_version_download_is_used_for_inference(workspace, monkeypat
     result = CliRunner().invoke(main.app, ['run', 'Hi', '--workspace', str(root), '--version', selected, '--json'])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)['source_version_id'] == selected
+
+
+def test_patch_build_requires_checkpoint_in_inventory(workspace, monkeypatch):
+    root, _, _ = workspace
+    parent = root / 'model'
+    path = parent / 'delta-model.json'
+    metadata = json.loads(path.read_text())
+    metadata['files'] = []
+    path.write_text(json.dumps(metadata))
+    monkeypatch.setattr(main, 'build_sparse', lambda *args: pytest.fail('Unverified checkpoint used'))
+    result = CliRunner().invoke(main.app, ['patch', 'build', '--parent', str(parent), '--modified', str(root / 'edited.safetensors'), '--output', str(root / 'built')])
+    assert result.exit_code != 0
+    assert 'inventory' in result.output
+    assert not (root / 'built').exists()
+
+
+@pytest.mark.parametrize('fail_publish', [False, True])
+def test_publish_preserves_unrelated_backup_and_rolls_back(tmp_path, monkeypatch, fail_publish):
+    output, staging, unrelated = (tmp_path / name for name in ['submission', 'staging', '.submission.replaced'])
+    for directory in (output, staging, unrelated):
+        directory.mkdir()
+    (output / 'old').write_text('old')
+    (staging / 'new').write_text('new')
+    (unrelated / 'keep').write_text('keep')
+    rename = Path.rename
+    def failing_rename(path, target):
+        if path == staging:
+            raise OSError('cannot publish')
+        return rename(path, target)
+    if fail_publish:
+        monkeypatch.setattr(Path, 'rename', failing_rename)
+        with pytest.raises(OSError, match='cannot publish'):
+            main.publish_directory(staging, output)
+        assert (output / 'old').read_text() == 'old'
+    else:
+        main.publish_directory(staging, output)
+        assert (output / 'new').read_text() == 'new'
+    assert (unrelated / 'keep').read_text() == 'keep'
+    assert not list(tmp_path.glob('.submission.backup-*'))

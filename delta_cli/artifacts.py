@@ -16,6 +16,28 @@ def file_hash(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
+def verify_artifact_bytes(directory, files):
+    """Check recorded sizes and SHA-256 digests. Return the digests that were computed."""
+    directory = Path(directory)
+    if not isinstance(files, list):
+        raise ValueError("invalid_artifact_inventory")
+    digests = {}
+    for artifact in files:
+        if not isinstance(artifact, dict):
+            raise ValueError("invalid_artifact_inventory")
+        name = artifact.get("name")
+        if not isinstance(name, str) or Path(name).name != name:
+            raise ValueError("Invalid model artifact filename.")
+        path = directory / name
+        if path.stat().st_size != artifact.get("size_bytes"):
+            raise ValueError(f"Parent artifact changed: {name}. Keep the parent untouched.")
+        digest = file_hash(path)
+        if digest != artifact.get("sha256"):
+            raise ValueError(f"Parent artifact changed: {name}. Keep the parent untouched.")
+        digests[name] = digest
+    return digests
+
+
 def validate_manifest(manifest):
     if not isinstance(manifest, dict):
         raise ValueError("invalid_manifest")

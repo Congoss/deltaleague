@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from delta_cli import main
@@ -349,3 +350,325 @@ def test_atomic_upload_state_failure_preserves_previous_intent(tmp_path, monkeyp
         main.write_upload_state(state, {'idempotency_key': 'new'})
     assert state.read_bytes() == original
     assert not list(tmp_path.glob('.delta-upload-*.tmp'))
+
+
+def device_flow():
+    return {'verification_url': 'https://deltaleague.ai/device', 'user_code': 'ABCD-1234', 'interval': 0, 'id': 'dev', 'secret': 'hidden'}
+
+
+def test_login_polls_for_token_and_writes_0600_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv('DELTA_CONFIG', str(tmp_path / 'auth.json'))
+    monkeypatch.setattr(main.time, 'sleep', lambda *args: None)
+    opened = []
+    monkeypatch.setattr(main.webbrowser, 'open', lambda url: opened.append(url))
+    polls = {'n': 0}
+
+    def call(method, path, **kwargs):
+        if path == 'cli-auth':
+            return device_flow()
+        polls['n'] += 1
+        return {'token': 'token-value'} if polls['n'] > 1 else {}
+
+    monkeypatch.setattr(main, 'call', call)
+    result = runner.invoke(main.app, ['login', '--no-browser'])
+    assert result.exit_code == 0, result.output
+    assert 'ABCD-1234' in result.output and opened == []
+    auth = tmp_path / 'auth.json'
+    assert json.loads(auth.read_text()) == {'api': 'https://deltaleague.ai', 'token': 'token-value'}
+    assert auth.stat().st_mode & 0o777 == 0o600
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: device_flow() if args[1] == 'cli-auth' else {})
+    timed_out = runner.invoke(main.app, ['login', '--no-browser'])
+    assert timed_out.exit_code == 1
+    assert 'timed out' in timed_out.output and 'Traceback' not in timed_out.output
+
+
+def test_login_retries_a_transient_poll_error(tmp_path, monkeypatch):
+    monkeypatch.setenv('DELTA_CONFIG', str(tmp_path / 'auth.json'))
+    monkeypatch.setattr(main.time, 'sleep', lambda *args: None)
+    monkeypatch.setattr(main.webbrowser, 'open', lambda url: None)
+    attempts = {'n': 0}
+
+    def handler(request):
+        if request.url.path.endswith('/cli-auth'):
+            return httpx.Response(200, json=device_flow())
+        attempts['n'] += 1
+        if attempts['n'] == 1:
+            return httpx.Response(503, json={'error': 'busy'})
+        return httpx.Response(200, json={'token': 'tok'})
+
+    monkeypatch.setattr(main, 'client', lambda: httpx.Client(transport=httpx.MockTransport(handler), base_url='https://deltaleague.ai'))
+    result = runner.invoke(main.app, ['login', '--no-browser'])
+    assert result.exit_code == 0, result.output
+    assert attempts['n'] == 2
+    assert json.loads((tmp_path / 'auth.json').read_text())['token'] == 'tok'
+
+
+def test_request_retries_429_and_stops_on_4xx_or_exhausted_5xx(monkeypatch):
+    monkeypatch.setattr(main.time, 'sleep', lambda *args: None)
+    calls = {'n': 0}
+
+    def transport(status):
+        def handler(request):
+            calls['n'] += 1
+            if status == 429 and calls['n'] > 1:
+                return httpx.Response(200, json={'ok': True})
+            return httpx.Response(status, json={'ok': True} if status == 200 else {'no': True})
+        return lambda: httpx.Client(transport=httpx.MockTransport(handler), base_url='https://deltaleague.ai')
+
+    monkeypatch.setattr(main, 'client', transport(429))
+    assert main.call('GET', 'me', retries=2) == {'ok': True}
+    assert calls['n'] == 2
+    calls['n'] = 0
+    monkeypatch.setattr(main, 'client', transport(400))
+    with pytest.raises(main.typer.Exit):
+        main.call('GET', 'me', retries=5)
+    assert calls['n'] == 1
+    calls['n'] = 0
+
+    def down(request):
+        calls['n'] += 1
+        return httpx.Response(503, text='down')
+
+    monkeypatch.setattr(main, 'client', lambda: httpx.Client(transport=httpx.MockTransport(down), base_url='https://deltaleague.ai'))
+    with pytest.raises(main.typer.Exit):
+        main.call('GET', 'me', retries=2)
+    assert calls['n'] == 3
+
+
+def test_call_reports_authentication_and_generic_http_errors(monkeypatch):
+    def client_for(status, body=None, raw=None):
+        def handler(request):
+            if raw is not None:
+                return httpx.Response(status, content=raw)
+            return httpx.Response(status, json=body or {})
+        return lambda: httpx.Client(transport=httpx.MockTransport(handler), base_url='https://deltaleague.ai')
+
+    monkeypatch.setattr(main, 'client', client_for(401, {'detail': 'nope'}))
+    denied = runner.invoke(main.app, ['whoami'])
+    assert denied.exit_code == 1 and 'delta login' in denied.output
+    monkeypatch.setattr(main, 'client', client_for(500, {'detail': 'boom'}))
+    failed = runner.invoke(main.app, ['whoami'])
+    assert failed.exit_code == 1 and 'HTTP 500' in failed.output and 'boom' in failed.output
+    monkeypatch.setattr(main, 'client', client_for(500, raw=b'<html>'))
+    plain = runner.invoke(main.app, ['whoami'])
+    assert plain.exit_code == 1 and 'HTTP 500' in plain.output and 'Traceback' not in plain.output
+
+
+def test_status_watch_stops_on_terminal_state(monkeypatch):
+    monkeypatch.setattr(main.time, 'sleep', lambda *args: None)
+    states = iter([{'state': 'pending', 'id': 's'}, {'state': 'verified', 'id': 's'}])
+    seen = []
+
+    def call(method, path, **kwargs):
+        seen.append(kwargs.get('retries', 0))
+        return next(states)
+
+    monkeypatch.setattr(main, 'call', call)
+    watched = runner.invoke(main.app, ['submission', 'status', 's', '--watch'])
+    assert watched.exit_code == 0, watched.output
+    assert seen == [5, 5] and 'verified' in watched.output
+    seen.clear()
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: seen.append(kwargs.get('retries', 0)) or {'state': 'pending'})
+    once = runner.invoke(main.app, ['submission', 'status', 's'])
+    assert once.exit_code == 0, once.output
+    assert seen == [0]
+
+
+def test_client_scopes_saved_token_to_api_and_prefers_delta_token(tmp_path, monkeypatch):
+    auth = tmp_path / 'auth.json'
+    auth.write_text(json.dumps({'api': 'https://deltaleague.ai', 'token': 'saved'}))
+    monkeypatch.setenv('DELTA_CONFIG', str(auth))
+    monkeypatch.delenv('DELTA_TOKEN', raising=False)
+    with main.client() as http:
+        assert http.headers['Authorization'] == 'Bearer saved'
+    monkeypatch.setattr(main, 'API', 'https://other.example')
+    with main.client() as http:
+        assert 'Authorization' not in http.headers
+    monkeypatch.setenv('DELTA_TOKEN', 'env-token')
+    with main.client() as http:
+        assert http.headers['Authorization'] == 'Bearer env-token'
+
+
+def test_logout_removes_credentials_when_the_api_call_fails(tmp_path, monkeypatch):
+    auth = tmp_path / 'auth.json'
+    auth.write_text(json.dumps({'api': 'https://deltaleague.ai', 'token': 'saved'}))
+    monkeypatch.setenv('DELTA_CONFIG', str(auth))
+
+    def client():
+        def handler(request):
+            return httpx.Response(401, json={'detail': 'expired'})
+        return httpx.Client(transport=httpx.MockTransport(handler), base_url='https://deltaleague.ai')
+
+    monkeypatch.setattr(main, 'client', client)
+    denied = runner.invoke(main.app, ['logout'])
+    assert denied.exit_code == 0, denied.output
+    assert 'Signed out' in denied.output and not auth.exists()
+    auth.write_text(json.dumps({'api': 'https://deltaleague.ai', 'token': 'saved'}))
+
+    def down():
+        raise httpx.ConnectError('https://user:secret@server.invalid')
+
+    monkeypatch.setattr(main, 'client', down)
+    offline = runner.invoke(main.app, ['logout'])
+    assert offline.exit_code == 0, offline.output
+    assert 'could not be revoked' in offline.output and 'Signed out' not in offline.output
+    assert 'secret' not in offline.output and not auth.exists()
+
+
+def test_validate_reports_malformed_submissions_without_a_traceback(tmp_path):
+    missing = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert missing.exit_code != 0 and 'Traceback' not in missing.output and 'manifest.json' in ''.join(unstyle(missing.output).replace('│', '').split())
+    submitted = runner.invoke(main.app, ['submit', str(tmp_path)])
+    assert submitted.exit_code != 0 and 'Traceback' not in submitted.output
+    (tmp_path / 'manifest.json').write_text('{')
+    broken = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert broken.exit_code != 0 and 'Traceback' not in broken.output
+    (tmp_path / 'manifest.json').write_text(json.dumps({'schema_version': 'nope'}))
+    schema = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert schema.exit_code != 0 and 'unsupported_schema' in schema.output and 'Traceback' not in schema.output
+    payload = b'weights'
+    manifest = {
+        'schema_version': 'delta.submission.v1', 'format': 'sparse-diff', 'operation': 'replace',
+        'reconstruction_version': 'delta-reconstruct-v1',
+        'parent_version_id': '00000000-0000-0000-0000-000000000002',
+        'parent_content_hash': 'a' * 64, 'model_config_id': 'tiny',
+        'tensors': {'layer.weight': {'indices': 't0.indices', 'values': 't0.values'}},
+        'artifacts': [{'name': 'weights.safetensors', 'sha256': hashlib.sha256(payload).hexdigest(), 'size_bytes': len(payload)}],
+    }
+    listed = dict(manifest, format=['sparse-diff'])
+    (tmp_path / 'manifest.json').write_text(json.dumps(listed))
+    typed = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert typed.exit_code != 0 and 'Traceback' not in typed.output
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    absent = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert absent.exit_code != 0 and 'Traceback' not in absent.output
+    (tmp_path / 'weights.safetensors').write_bytes(b'other')
+    mismatch = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert mismatch.exit_code != 0 and 'integrity' in mismatch.output and 'Traceback' not in mismatch.output
+    (tmp_path / 'weights.safetensors').write_bytes(payload)
+    valid = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert valid.exit_code == 0, valid.output
+    assert 'valid' in valid.output
+
+
+def test_download_rejects_a_traversing_filename(tmp_path):
+    bad = dict(artifact(), name='../auth.json')
+    with pytest.raises(main.typer.BadParameter, match='filename'):
+        main.download_artifact(bad, tmp_path)
+    assert not (tmp_path / 'auth.json').exists()
+
+
+def test_results_reads_the_json_flag(monkeypatch):
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: {'result': {'validation_score': 1, 'rows': [1]}})
+    text = runner.invoke(main.app, ['submission', 'results', 'sub'])
+    assert text.exit_code == 0, text.output
+    assert 'validation_score: 1' in text.output and 'rows' not in text.output
+    raw = runner.invoke(main.app, ['submission', 'results', 'sub', '--json'])
+    assert '"rows"' in raw.output
+
+
+def test_api_option_requires_https_outside_localhost(monkeypatch):
+    seen = []
+
+    def client():
+        seen.append(main.API)
+        raise httpx.ConnectError('stop')
+
+    monkeypatch.setattr(main, 'client', client)
+    for origin in ('http://evil.example', 'http://127.0.0.1:80@evil.example', 'http://localhost', 'http://127.0.0.1',
+                   'https://user:secret@example.com', 'http://localhost:abc', 'https://example.com/extra'):
+        result = runner.invoke(main.app, ['--api', origin, 'whoami'])
+        assert result.exit_code != 0 and 'HTTPS' in result.output, origin
+    assert seen == []
+    local = runner.invoke(main.app, ['--api', 'http://127.0.0.1:9', 'whoami'])
+    named = runner.invoke(main.app, ['--api', 'http://localhost:9/', 'whoami'])
+    remote = runner.invoke(main.app, ['--api', 'https://example.com/', 'whoami'])
+    assert 'HTTPS' not in local.output and 'HTTPS' not in named.output and 'HTTPS' not in remote.output
+    assert seen == ['http://127.0.0.1:9', 'http://localhost:9', 'https://example.com']
+
+
+def test_competition_init_rejects_missing_config_parent_and_validation(tmp_path, monkeypatch):
+    downloads = []
+    monkeypatch.setattr(main, 'pull_model', lambda *args, **kwargs: downloads.append(args))
+
+    def invoke(board, config=None, version=None):
+        def call(method, path, **kwargs):
+            if path == 'leaderboard':
+                return board
+            if path.startswith('evaluation-configs/'):
+                return config or {}
+            if path.startswith('model-versions/'):
+                return version or {'id': 'parent', 'model_id': 'model', 'files': []}
+            raise AssertionError(path)
+        monkeypatch.setattr(main, 'call', call)
+        return runner.invoke(main.app, ['competition', 'init', 'model', '--output', str(tmp_path / 'ws')])
+
+    missing_config = invoke({'config_id': None, 'rows': []})
+    assert missing_config.exit_code != 0 and 'no active competition' in missing_config.output
+    missing_parent = invoke({'config_id': 'config', 'rows': [{'version_id': 'child', 'parent_id': 'parent'}]})
+    assert missing_parent.exit_code != 0 and 'No original checkpoint' in missing_parent.output
+    ready = {'config_id': 'config', 'rows': [{'version_id': 'parent', 'parent_id': None}]}
+    incomplete = [
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v'},
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab', 'validation_size_bytes': 2},
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab', 'validation_size_bytes': 0, 'validation_names': ['math']},
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab', 'validation_size_bytes': 2, 'validation_names': []},
+        {'id': 'config', 'validation_sha256': 'ab', 'validation_size_bytes': 2, 'validation_names': ['math']},
+    ]
+    for config in incomplete:
+        result = invoke(ready, config)
+        assert result.exit_code != 0 and 'verifiable' in result.output, config
+    assert downloads == []
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    (workspace / 'delta-workspace.json').write_text(json.dumps({
+        'api': 'https://deltaleague.ai', 'model_id': 'model', 'parent_version_id': 'parent', 'config_id': 'old'}))
+    occupied = invoke(ready, {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'a' * 64,
+                              'validation_size_bytes': 2, 'validation_names': ['math']})
+    assert occupied.exit_code != 0 and 'another' in occupied.output and downloads == []
+
+
+def test_pull_model_refuses_a_different_parent(tmp_path, monkeypatch):
+    output = tmp_path / 'model'
+    output.mkdir()
+    (output / 'delta-model.json').write_text(json.dumps({'id': 'other'}))
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: {'id': 'parent', 'model_id': 'model', 'files': []})
+    with pytest.raises(main.typer.BadParameter, match='different parent'):
+        main.pull_model('parent', output)
+
+
+@pytest.mark.parametrize('contents', ['[]', 'null', '42', '"token"', '{'])
+def test_logout_clears_malformed_credentials(tmp_path, monkeypatch, contents):
+    config = tmp_path / 'auth.json'
+    config.write_text(contents)
+    monkeypatch.setenv('DELTA_CONFIG', str(config))
+    result = runner.invoke(main.app, ['logout'])
+    assert result.exit_code == 0, result.output
+    assert not config.exists()
+    assert 'could not be revoked' in result.output
+
+
+@pytest.mark.parametrize('url,digest', [('ftp://example.org/a', 'a' * 64), ('https://example.org/a', 'invalid'), ('https://[invalid/a', 'a' * 64)])
+def test_public_validation_rejects_invalid_download_metadata(url, digest):
+    with pytest.raises(main.typer.BadParameter):
+        main.public_validation({'validation_download': url, 'validation_sha256': digest,
+                                'validation_size_bytes': 1, 'validation_names': ['math']})
+
+
+def test_login_lost_token_response_explains_restart(monkeypatch, tmp_path):
+    polls = []
+    def handle(request):
+        if request.url.path == '/api/v1/cli-auth':
+            return httpx.Response(200, json={'id': 'device', 'secret': 'secret', 'verification_url': 'https://example.org', 'interval': 0})
+        polls.append(request)
+        if len(polls) == 1:
+            raise httpx.ReadError('lost token response', request=request)
+        return httpx.Response(400, json={'detail': 'Authorization expired or consumed'})
+    monkeypatch.setattr(main, 'client', lambda: httpx.Client(base_url='https://example.org', transport=httpx.MockTransport(handle)))
+    monkeypatch.setattr(main.time, 'sleep', lambda _: None)
+    monkeypatch.setenv('DELTA_CONFIG', str(tmp_path / 'auth.json'))
+    result = runner.invoke(main.app, ['login', '--no-browser'])
+    assert result.exit_code == 1
+    assert len(polls) == 2
+    assert 'Run `delta login` again' in result.output
+    assert not (tmp_path / 'auth.json').exists()
