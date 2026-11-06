@@ -32,7 +32,7 @@ test('classification comes from paths rather than labels or PR title',()=>{
 });
 
 function githubFor({state='open', sha='abc', changed=1, permission='read', roleName, permissionStatus, files, tree, truncated=false, secondSha}={}) {
- const pr = {state, user:{login:'alice'}, head:{sha}, changed_files:changed};
+ const pr = {state, user:{login:'alice'}, head:{sha}, base:{sha:'basesha'}, changed_files:changed};
  let reads = 0;
  const github = {
   rest:{
@@ -45,6 +45,7 @@ function githubFor({state='open', sha='abc', changed=1, permission='read', roleN
      if (permissionStatus) throw Object.assign(new Error('permission'), {status: permissionStatus});
      return {data: roleName ? {role_name: roleName} : {permission}};
     },
+    compareCommits: async (args) => { github.compareArgs = args; return {data:{files, truncated:false}}; },
    },
    git:{
     getTree: async (args) => { github.treeCalls++; github.treeArgs = args; return {data:{tree: tree || [], truncated}}; },
@@ -99,4 +100,21 @@ test('inspect fetches the head tree when a research path is renamed away', async
  await inspect(github, context, 1);
  assert.equal(github.treeCalls, 1);
  assert.equal(github.treeArgs.tree_sha, 'headsha');
+ assert.equal(github.compareArgs.head, 'headsha');
+ assert.equal(github.compareArgs.base, 'basesha');
+});
+
+test('exact login directories are owned only by that login', () => {
+ const paths = ['research/alice/edit/README.md', 'research/alice/edit/edit.py'];
+ const tree = paths.map(regular);
+ assert.equal(check(paths, {tree, author:'alice'}).errors.length, 0);
+ assert.ok(check(paths, {tree, author:'bob'}).errors.some(error => error.includes('research/bob/')));
+});
+
+test('research rejects git lfs attributes and pointer blobs', () => {
+ const readme = 'research/alice-edit/README.md';
+ const attributes = 'research/alice-edit/.gitattributes';
+ assert.ok(check([readme, attributes], {tree:[regular(readme), regular(attributes)]}).errors.some(error => error.includes('LFS')));
+ const pointer = {...regular('research/alice-edit/weights.bin'), content:'version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 10\n'};
+ assert.ok(check([readme, pointer.path], {tree:[regular(readme), pointer]}).errors.some(error => error.includes('pointer')));
 });

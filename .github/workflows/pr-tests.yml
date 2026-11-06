@@ -16,13 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Determine test scope from trusted policy
         id: scope
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         with:
@@ -35,7 +35,7 @@ jobs:
             core.setOutput('repo',result.pr.head.repo.full_name);
       - name: Check policy regression tests
         run: node --test .github/scripts/policy.test.cjs
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.scope.outputs.software == 'true'
         with:
           repository: ${{ steps.scope.outputs.repo }}
@@ -43,7 +43,7 @@ jobs:
           persist-credentials: false
       # Untrusted tooling runs only on this disposable, read-only runner. No caches,
       # secrets, publishing environments, artifact uploads, or self-hosted runners.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         if: steps.scope.outputs.software == 'true'
         with:
           python-version: '3.12'

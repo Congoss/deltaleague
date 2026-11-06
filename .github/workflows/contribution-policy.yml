@@ -10,7 +10,8 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  statuses: write
+  issues: write
+  checks: write
 jobs:
   policy:
     name: Inspect contribution boundaries
@@ -18,11 +19,11 @@ jobs:
     timeout-minutes: 5
     steps:
       # Trusted base only. Never check out or execute code from the PR head here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         with:
@@ -31,25 +32,38 @@ jobs:
             const number = Number(process.env.PR_NUMBER);
             if (!Number.isInteger(number) || number <= 0) throw new Error('Invalid PR number');
             const {data: initial} = await github.rest.pulls.get({...context.repo, pull_number:number});
-            const target_url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const contexts = ['Contribution policy', 'Research validation'];
-            const status = (name,state,description) => github.rest.repos.createCommitStatus({...context.repo,sha:initial.head.sha,context:name,state,description,target_url});
-            for (const name of contexts) await status(name,'pending','Checking contribution boundaries');
+            const names = ['Contribution policy', 'Research validation'];
+            const runs = {};
+            for (const name of names) {
+              const {data} = await github.rest.checks.create({...context.repo, name, head_sha: initial.head.sha, status: 'in_progress'});
+              runs[name] = data.id;
+            }
+            const finish = (name, conclusion, summary) => github.rest.checks.update({
+              ...context.repo, check_run_id: runs[name], status: 'completed', conclusion,
+              output: {title: name, summary}
+            });
+            const escapeSummary = text => String(text).replace(/[\r\n]+/g, ' ').replace(/[&<>`]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','`':'&#96;'}[ch]));
             try {
               const result = await inspect(github,context,number);
               if (result.pr.head.sha !== initial.head.sha) throw new Error('PR head changed; rerun required');
               const managed = ['type:research','type:tooling','type:competition','policy:blocked'];
               const desired = [`type:${result.category}`, ...(result.errors.length ? ['policy:blocked'] : [])];
+              for (const name of managed.concat(desired)) {
+                try { await github.rest.issues.createLabel({...context.repo, name, color: name === 'policy:blocked' ? 'b60205' : '0e8a16'}); }
+                catch (error) { if (error.status !== 422) throw error; }
+              }
               for (const label of result.pr.labels.map(l=>l.name).filter(n=>managed.includes(n)&&!desired.includes(n))) {
                 await github.rest.issues.removeLabel({...context.repo,issue_number:number,name:label});
               }
               await github.rest.issues.addLabels({...context.repo,issue_number:number,labels:desired});
-              const state = result.errors.length ? 'failure' : 'success';
-              await status('Contribution policy',state,result.errors.length ? 'Contribution boundaries violated; see check summary' : `${result.category}: contribution boundaries passed`);
-              await status('Research validation',state,result.errors.length ? 'Research or protected-path policy failed' : result.category === 'research' ? 'Research files validated; no participant code executed' : 'Not a research PR');
-              await core.summary.addHeading(`PR #${number}: ${result.category}`).addRaw(result.errors.length ? result.errors.join('\n') : 'Contribution boundaries passed. Maintainer review is still required.').write();
+              const conclusion = result.errors.length ? 'failure' : 'success';
+              const policySummary = result.errors.length ? escapeSummary(result.errors.join('\n')) : `${result.category}: contribution boundaries passed`;
+              const researchSummary = result.errors.length ? 'Research or protected-path policy failed' : result.category === 'research' ? 'Research files validated; no participant code executed' : 'Not a research PR';
+              await finish('Contribution policy', conclusion, policySummary);
+              await finish('Research validation', conclusion, researchSummary);
+              await core.summary.addHeading(`PR #${number}: ${result.category}`).addRaw(result.errors.length ? escapeSummary(result.errors.join('\n')) : 'Contribution boundaries passed. Maintainer review is still required.').write();
               if (result.errors.length) core.setFailed('Contribution policy failed');
             } catch(error) {
-              for (const name of contexts) await status(name,'failure','Inspection failed closed; rerun required');
+              for (const name of names) if (runs[name]) await finish(name, 'failure', 'Inspection failed closed; rerun required');
               throw error;
             }
