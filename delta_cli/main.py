@@ -65,15 +65,35 @@ def show(value):
     typer.echo(json.dumps(value, indent=2))
 
 
+def api_origin(raw):
+    """Return scheme://host[:port]. Reject userinfo, a path, and cleartext except loopback."""
+    try:
+        parsed = urlsplit(raw.strip())
+        port = parsed.port
+    except ValueError:
+        raise typer.BadParameter("Use HTTPS outside localhost") from None
+    loopback = parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and port is not None
+    if (parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}
+            or parsed.hostname is None or (parsed.scheme != "https" and not loopback)):
+        raise typer.BadParameter("Use HTTPS outside localhost")
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return f"{parsed.scheme}://{host}" if port is None else f"{parsed.scheme}://{host}:{port}"
+
+
+def public_validation(config):
+    names = config.get("validation_names")
+    size = config.get("validation_size_bytes")
+    url, digest = config.get("validation_download"), config.get("validation_sha256")
+    if (not isinstance(url, str) or not url or not isinstance(digest, str) or not digest or type(size) is not int or size <= 0
+            or not isinstance(names, list) or not names or not all(isinstance(name, str) and name for name in names)):
+        raise typer.BadParameter("The server does not provide a verifiable public validation download for this configuration yet.")
+    return {"name": "validation.json", "url": url, "sha256": digest, "size_bytes": size}, names
+
+
 @app.callback()
 def options(api: str = typer.Option(os.getenv("DELTA_API", "https://deltaleague.ai"), help="Delta League API origin")):
     global API
-    parsed = urlsplit(api.strip())
-    loopback = (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port is not None
-                and not parsed.username and not parsed.password)
-    if parsed.hostname is None or (parsed.scheme != "https" and not loopback):
-        raise typer.BadParameter("Use HTTPS outside localhost")
-    API = api.strip().rstrip("/")
+    API = api_origin(api)
 
 
 @app.command()
@@ -203,11 +223,7 @@ def competition_init(model: str, output: Path = typer.Option(Path("experiment"))
     if version["model_id"] != model:
         raise typer.BadParameter("The selected parent belongs to a different model.")
     config = call("GET", f"evaluation-configs/{board['config_id']}")
-    names = config.get("validation_names")
-    size = config.get("validation_size_bytes")
-    if (not config.get("validation_download") or not config.get("validation_sha256") or type(size) is not int or size <= 0
-            or not isinstance(names, list) or not names or not all(isinstance(name, str) and name for name in names)):
-        raise typer.BadParameter("The server does not provide a verifiable public validation download for this configuration yet.")
+    validation, names = public_validation(config)
     identity = {"api": API, "model_id": model, "parent_version_id": parent, "config_id": config["id"]}
     workspace_path = output / "delta-workspace.json"
     if workspace_path.exists():
@@ -215,13 +231,12 @@ def competition_init(model: str, output: Path = typer.Option(Path("experiment"))
         if any(previous.get(k) != value for k, value in identity.items()):
             raise typer.BadParameter("This workspace belongs to another model, parent, API, or evaluation version. Use a new output directory.")
     pull_model(parent, output / "model")
-    download_artifact({"name": "validation.json", "url": config["validation_download"],
-                       "sha256": config["validation_sha256"], "size_bytes": config["validation_size_bytes"]}, output)
+    download_artifact(validation, output)
     public_config = {k: v for k, v in config.items() if k != "validation_download"}
     (output / "evaluation.json").write_text(json.dumps(public_config, indent=2))
     workspace_path.write_text(json.dumps(identity, indent=2))
     show({**identity, "directory": str(output), "parent_directory": str(output / "model"),
-          "validation_file": str(output / "validation.json"), "validation_benchmarks": config["validation_names"]})
+          "validation_file": str(output / "validation.json"), "validation_benchmarks": names})
 
 
 @patch_app.command("build")

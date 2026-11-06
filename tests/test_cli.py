@@ -69,7 +69,8 @@ def test_api_option_requires_https_outside_localhost(monkeypatch):
         raise httpx.ConnectError('stop')
 
     monkeypatch.setattr(main, 'client', client)
-    for origin in ('http://evil.example', 'http://127.0.0.1:80@evil.example', 'http://localhost', 'http://127.0.0.1'):
+    for origin in ('http://evil.example', 'http://127.0.0.1:80@evil.example', 'http://localhost', 'http://127.0.0.1',
+                   'https://user:secret@example.com', 'http://localhost:abc', 'https://example.com/extra'):
         result = runner.invoke(main.app, ['--api', origin, 'whoami'])
         assert result.exit_code != 0 and 'HTTPS' in result.output, origin
     assert seen == []
