@@ -1,4 +1,6 @@
 import json
+import math
+import time
 
 import pytest
 from typer.testing import CliRunner
@@ -28,6 +30,27 @@ def write_run(root, name, scores, generation=None, config_id='tiny-v1', model_id
 
 def flat(n, value, benchmarks=('a',)):
     return {b: [[value]] * n for b in benchmarks}
+
+
+def test_sign_test_matches_the_binomial_tail_and_stays_linear():
+    def slow(wins, losses):
+        n = wins + losses
+        if not n:
+            return 1.0
+        tail = sum(math.comb(n, i) for i in range(min(wins, losses) + 1))
+        return min(1.0, 2 * tail / 2 ** n)
+
+    for wins, losses in [(0, 0), (0, 5), (3, 3), (1, 20), (20, 1), (8, 7)]:
+        assert compare.sign_test(wins, losses) == slow(wins, losses)
+    started = time.perf_counter()
+    assert compare.sign_test(5000, 5000) == 1.0
+    assert time.perf_counter() - started < 1
+
+
+def test_control_characters_in_a_benchmark_name_are_rejected(tmp_path):
+    report = write_run(tmp_path, 'x', {'a\nsep': [[1]]})
+    with pytest.raises(ValueError, match='control characters'):
+        compare.load(report)
 
 
 def test_identical_runs_are_not_separable(tmp_path):
