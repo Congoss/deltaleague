@@ -2,6 +2,7 @@
 import json
 import math
 import random
+import re
 import statistics
 from pathlib import Path
 
@@ -17,6 +18,8 @@ def load(path):
     report = json.loads(Path(path).read_text())
     if not isinstance(report, dict):
         raise ValueError('Report must be a JSON object.')
+    if 'public_validation' in report:
+        return load_public(report)
     rows = local.generations_path(path)
     if not rows.exists():
         raise ValueError(f'Generations file not found: {rows}')
@@ -27,8 +30,31 @@ def load(path):
     return report, means
 
 
+def load_public(report):
+    """Validate the frozen public contract before pairing its stable item IDs."""
+    from .public_eval.suite import score_public
+
+    public = report['public_validation']
+    if not isinstance(public, dict):
+        raise ValueError('public_validation must be an object.')
+    content_hash = public.get('content_hash')
+    if not isinstance(content_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', content_hash):
+        raise ValueError('Public report must identify its checkpoint with a content hash.')
+    # This also rejects reference fixtures, wrong suites, missing/duplicate IDs,
+    # incomplete benchmark coverage and non-finite/out-of-range scores.
+    score, _ = score_public(public, content_hash)
+    normalized = {'report_format': 'public', 'protocol': public['protocol'],
+                  'suite_sha256': public['suite_sha256'], 'content_hash': content_hash,
+                  'validation_score': score}
+    means = {name: {'examples': {row['id']: row['score'] for row in rows},
+                    'truncation_rate': None, 'mean_tokens': None}
+             for name, rows in public['groups'].items()}
+    return normalized, means
+
+
 def side(path, report):
-    return {'path': str(path), **{k: report.get(k) for k in SUMMARY}}
+    return {'path': str(path), **{k: report.get(k) for k in SUMMARY},
+            **{k: report[k] for k in ('protocol', 'suite_sha256', 'content_hash') if k in report}}
 
 
 def sign_test(wins, losses):
@@ -46,6 +72,9 @@ def interval(values):
 
 def compare_reports(baseline, candidate, resamples=10000, seed=0):
     (base, base_b), (cand, cand_b) = load(baseline), load(candidate)
+    public = base.get('report_format') == 'public'
+    if public != (cand.get('report_format') == 'public'):
+        raise ValueError('Cannot compare public-evaluator and legacy local reports.')
     if base.get('config_id') != cand.get('config_id') or base.get('validation_sha256') != cand.get('validation_sha256'):
         raise ValueError('Reports use a different evaluation configuration.')
     if base.get('model_id') != cand.get('model_id'):
@@ -82,7 +111,8 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
     return {'baseline': side(baseline, base), 'candidate': side(candidate, cand),
             'model_id': base.get('model_id'), 'config_id': base.get('config_id'),
             'validation_sha256': base.get('validation_sha256'),
-            'generation_differs': base.get('generation') != cand.get('generation'),
+            **({'protocol': base['protocol'], 'suite_sha256': base['suite_sha256']} if public else {}),
+            'generation_differs': None if public else base.get('generation') != cand.get('generation'),
             'benchmarks': benchmarks,
             'overall': {'baseline_mean': statistics.mean(v['baseline_mean'] for v in benchmarks.values()),
                         'candidate_mean': statistics.mean(v['candidate_mean'] for v in benchmarks.values()),
@@ -90,15 +120,21 @@ def compare_reports(baseline, candidate, resamples=10000, seed=0):
                         'run_worst_case_se': 100 * math.sqrt(sum(.25 / v['n'] for v in benchmarks.values())) / len(names),
                         'wins': wins, 'losses': losses, 'ties': len(pooled) - wins - losses, 'sign_test_p': sign_p,
                         'separable': (ci[0] > 0 or ci[1] < 0) and sign_p < .05},
-            'resamples': resamples, 'seed': seed, 'note': NOTE}
+            'resamples': resamples, 'seed': seed,
+            'note': NOTE + (' Public reports identify the declared checkpoint and pinned suite, but do not '
+                            'attest endpoint weights or matching serving runtime. Token/truncation metrics '
+                            'are unavailable. Intervals resample paired items within each benchmark and '
+                            'do not measure run-to-run generation variability.' if public else '')}
 
 
 def render(result):
     lines = []
     for name, v in result['benchmarks'].items():
+        truncation = ('trunc n/a' if v['baseline_truncation_rate'] is None or v['candidate_truncation_rate'] is None
+                      else f"trunc {v['baseline_truncation_rate']:.2f}->{v['candidate_truncation_rate']:.2f}")
         lines.append(f"{name} n={v['n']} {v['baseline_mean']:.1f} {v['candidate_mean']:.1f} {v['diff']:+.1f} "
                      f"[{v['ci95'][0]:+.1f}, {v['ci95'][1]:+.1f}] p={v['sign_test_p']:.3f} "
-                     f"trunc {v['baseline_truncation_rate']:.2f}->{v['candidate_truncation_rate']:.2f}")
+                     f"{truncation}")
     o = result['overall']
     lines.append(f"overall {o['baseline_mean']:.1f} {o['candidate_mean']:.1f} {o['diff']:+.1f} [{o['ci95'][0]:+.1f}, {o['ci95'][1]:+.1f}]")
     se = o['run_worst_case_se']
@@ -108,12 +144,14 @@ def render(result):
                  if o['separable'] else f'Not separable at this sample size. {spread}')
     if result['generation_differs']:
         lines.append('Generation settings differ between runs; the comparison includes decoding effects.')
+    if result['generation_differs'] is None:
+        lines.append(result['note'])
     return '\n'.join(lines)
 
 
 def compare(baseline: Path, candidate: Path, resamples: int = typer.Option(10000, min=1), seed: int = 0,
             output: Path | None = None, json_output: bool = typer.Option(False, '--json')):
-    """Compare two local evaluation reports with paired statistics; advisory, not a leaderboard score."""
+    """Compare legacy local reports or public-evaluator result.json files with paired statistics."""
     try:
         output = output and output.resolve()
         if output and output.exists():
