@@ -1,8 +1,10 @@
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
 import time
+from urllib.parse import urlsplit
 import uuid
 import webbrowser
 import httpx
@@ -240,6 +242,51 @@ def validate(path: Path):
     typer.echo("Manifest and artifact hashes are valid. Server checks parent compatibility and tensors.")
 
 
+def write_upload_state(path: Path, state: dict):
+    temporary = path.with_name(path.name + ".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def upload_url_allowed(url):
+    parsed = urlsplit(url)
+    if parsed.username or parsed.password or parsed.hostname is None:
+        return False
+    if parsed.scheme == "https":
+        return True
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port is not None
+
+
+def put_artifact(directory: Path, name: str, url: str):
+    """Upload one manifest artifact. Errors name the artifact and never the signed URL."""
+    if not isinstance(name, str) or Path(name).name != name:
+        typer.echo("Upload failed: the server returned an unexpected filename.", err=True)
+        raise typer.Exit(1)
+    file = directory / name
+    if not isinstance(url, str) or not upload_url_allowed(url):
+        typer.echo(f"Upload failed for {name}: the upload URL must be HTTPS.", err=True)
+        raise typer.Exit(1)
+    try:
+        with file.open("rb") as stream:
+            response = httpx.put(url, content=stream, headers={"Content-Length": str(file.stat().st_size)}, timeout=600, follow_redirects=False)
+    except httpx.HTTPError:
+        typer.echo(f"Upload failed for {name}. Check the connection and rerun the same submit command.", err=True)
+        raise typer.Exit(1)
+    if response.status_code < 200 or response.status_code >= 300:
+        typer.echo(f"Upload failed for {name} (HTTP {response.status_code}).", err=True)
+        raise typer.Exit(1)
+
+
 @app.command()
 def submit(path: Path, title: str = "Weight modification", pr: str | None = None):
     validate(path)
@@ -248,17 +295,31 @@ def submit(path: Path, title: str = "Weight modification", pr: str | None = None
         manifest["research"] = {"pr_url": pr}
     # Persist intent before posting: retries after a lost response reuse the same idempotency key.
     state_path = path / ".delta-upload.json"
-    state = json.loads(state_path.read_text()) if state_path.exists() else {}
-    fingerprint = __import__("hashlib").sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+    try:
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
     if state.get("fingerprint") != fingerprint or state.get("api") != API:
         upload = call("POST", "upload-sessions", json={"manifest": manifest})
-        for f in upload["files"]:
-            file = path / f["name"]
-            with file.open("rb") as stream:
-                response = httpx.put(f["url"], content=stream, headers={"Content-Length": str(file.stat().st_size)}, timeout=600)
-                response.raise_for_status()
-        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()), "fingerprint": fingerprint, "api": API}
-        state_path.write_text(json.dumps(state))
+        files = upload.get("files") if isinstance(upload, dict) else None
+        allowed = {artifact["name"] for artifact in manifest["artifacts"]}
+        if not isinstance(files, list) or not files:
+            typer.echo("Upload failed: the server returned an invalid upload session.", err=True)
+            raise typer.Exit(1)
+        for item in files:
+            name = item.get("name") if isinstance(item, dict) else None
+            if name not in allowed:
+                typer.echo("Upload failed: the server returned an unexpected filename.", err=True)
+                raise typer.Exit(1)
+            put_artifact(path, name, item.get("url"))
+        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()), "fingerprint": fingerprint, "api": API, "title": title}
+        write_upload_state(state_path, state)
+    elif state.get("title") != title:
+        state = {**state, "title": title, "idempotency_key": str(uuid.uuid4())}
+        write_upload_state(state_path, state)
     show(call("POST", "submissions", json={"upload_id": state["upload_id"], "title": title}, headers={"Idempotency-Key": state["idempotency_key"]}))
 
 

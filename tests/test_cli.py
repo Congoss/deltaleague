@@ -61,6 +61,99 @@ def test_init_records_reproducible_workspace_without_signed_urls(tmp_path, monke
     assert 'different model' in result.output
 
 
+def submission_dir(tmp_path, payload=b'weights', model='tiny'):
+    root = tmp_path / 'submission'
+    root.mkdir()
+    (root / 'weights.safetensors').write_bytes(payload)
+    manifest = {
+        'schema_version': 'delta.submission.v1', 'format': 'sparse-diff', 'operation': 'replace',
+        'reconstruction_version': 'delta-reconstruct-v1',
+        'parent_version_id': '00000000-0000-0000-0000-000000000002',
+        'parent_content_hash': 'a' * 64, 'model_config_id': model,
+        'tensors': {'layer.weight': {'indices': 't0.indices', 'values': 't0.values'}},
+        'artifacts': [{'name': 'weights.safetensors', 'sha256': hashlib.sha256(payload).hexdigest(), 'size_bytes': len(payload)}],
+    }
+    (root / 'manifest.json').write_text(json.dumps(manifest))
+    return root
+
+
+def upload_session(url='https://blob.invalid/upload?sig=secret'):
+    return {'id': 'upload-one', 'files': [{'name': 'weights.safetensors', 'url': url}]}
+
+
+def test_submit_uploads_once_and_reuses_idempotency_state(tmp_path, monkeypatch):
+    root = submission_dir(tmp_path)
+    calls = []
+    puts = []
+
+    def call(method, path, **kwargs):
+        calls.append((path, kwargs))
+        if path == 'upload-sessions':
+            return upload_session()
+        return {'id': 'submission-one', 'title': kwargs['json']['title']}
+
+    def put(url, **kwargs):
+        puts.append(kwargs['content'].read())
+        return httpx.Response(200, request=httpx.Request('PUT', url))
+
+    monkeypatch.setattr(main, 'call', call)
+    monkeypatch.setattr(main.httpx, 'put', put)
+    first = runner.invoke(main.app, ['submit', str(root), '--title', 'First'])
+    assert first.exit_code == 0, first.output
+    assert 'secret' not in first.output
+    state = json.loads((root / '.delta-upload.json').read_text())
+    assert (root / '.delta-upload.json').stat().st_mode & 0o777 == 0o600
+    second = runner.invoke(main.app, ['submit', str(root), '--title', 'First'])
+    assert second.exit_code == 0, second.output
+    assert [path for path, _ in calls].count('upload-sessions') == 1
+    assert puts == [b'weights']
+    posted = [kwargs for path, kwargs in calls if path == 'submissions']
+    assert posted[0]['headers']['Idempotency-Key'] == posted[1]['headers']['Idempotency-Key'] == state['idempotency_key']
+    retitled = runner.invoke(main.app, ['submit', str(root), '--title', 'Second'])
+    assert retitled.exit_code == 0, retitled.output
+    assert [path for path, _ in calls].count('upload-sessions') == 1
+    posted = [kwargs for path, kwargs in calls if path == 'submissions']
+    assert posted[2]['json']['title'] == 'Second'
+    assert posted[2]['headers']['Idempotency-Key'] != state['idempotency_key']
+    (tmp_path / 'other').mkdir()
+    changed = submission_dir(tmp_path / 'other', model='tiny-2')
+    (changed / '.delta-upload.json').write_text((root / '.delta-upload.json').read_text())
+    other = runner.invoke(main.app, ['--api', 'http://127.0.0.1:9', 'submit', str(changed), '--title', 'First'])
+    assert other.exit_code == 0, other.output
+    assert [path for path, _ in calls].count('upload-sessions') == 2
+
+
+def test_submit_upload_errors_do_not_report_success(tmp_path, monkeypatch):
+    root = submission_dir(tmp_path)
+    calls = []
+
+    def call(method, path, **kwargs):
+        calls.append(path)
+        if path == 'upload-sessions':
+            return upload_session()
+        raise AssertionError('submission posted after a failed upload')
+
+    monkeypatch.setattr(main, 'call', call)
+
+    def refuse(status):
+        def put(url, **kwargs):
+            kwargs['content'].read()
+            return httpx.Response(status, headers={'Location': url}, request=httpx.Request('PUT', url))
+        return put
+
+    monkeypatch.setattr(main.httpx, 'put', refuse(302))
+    redirected = runner.invoke(main.app, ['submit', str(root)])
+    assert redirected.exit_code == 1
+    assert 'secret' not in redirected.output and 'Traceback' not in redirected.output
+    assert 'HTTP 302' in redirected.output
+    assert not (root / '.delta-upload.json').exists()
+    monkeypatch.setattr(main.httpx, 'put', lambda url, **kwargs: (_ for _ in ()).throw(httpx.ConnectError(url)))
+    failed = runner.invoke(main.app, ['submit', str(root)])
+    assert failed.exit_code == 1
+    assert 'secret' not in failed.output and 'Traceback' not in failed.output
+    assert calls == ['upload-sessions', 'upload-sessions']
+
+
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     def fail():
         raise httpx.ConnectError('https://user:secret@server.invalid')
