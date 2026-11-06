@@ -21,7 +21,7 @@ def validate_manifest(manifest):
         raise ValueError("invalid_manifest")
     if manifest.get("schema_version") != "delta.submission.v1":
         raise ValueError("unsupported_schema")
-    if not isinstance(manifest.get("format"), str) or manifest.get("format") not in {"sparse-diff", "dense-diff", "lora", "full"}:
+    if manifest.get("format") not in ("sparse-diff", "dense-diff", "lora", "full"):
         raise ValueError("unsupported_format")
     if manifest.get("reconstruction_version") != "delta-reconstruct-v1":
         raise ValueError("unsupported_reconstruction")
@@ -44,7 +44,7 @@ def validate_manifest(manifest):
         if type(f.get("size_bytes")) is not int or f["size_bytes"] <= 0:
             raise ValueError("invalid_size")
     operation = manifest.get("operation", "replace")
-    if not isinstance(operation, str) or operation not in {"replace", "add"}:
+    if operation not in ("replace", "add"):
         raise ValueError("unsupported_operation")
     mapping = manifest.get("tensors", {})
     if not isinstance(mapping, dict) or not all(isinstance(k, str) and isinstance(v, dict) for k, v in mapping.items()):
@@ -57,7 +57,11 @@ def validate_manifest(manifest):
             raise ValueError("invalid_tensor_mapping")
         if manifest["format"] == "lora":
             alpha = spec.get("alpha")
-            if type(alpha) not in {int, float} or not math.isfinite(alpha):
+            try:
+                finite = type(alpha) in {int, float} and math.isfinite(float(alpha))
+            except OverflowError:
+                finite = False
+            if not finite:
                 raise ValueError("invalid_lora_alpha")
     if len(mapping) > 10000:
         raise ValueError("too_many_tensors")
@@ -125,11 +129,10 @@ def reconstruct(parent_path, artifact_path, manifest, allowed_prefix=""):
                 if indices.numel() and (indices[0] < 0 or indices[-1] >= original.numel() or not (indices[1:] > indices[:-1]).all()):
                     raise ValueError("invalid_sparse_indices")
                 updated = original.clone().reshape(-1)
-                incoming = values.to(dtype=original.dtype)
                 if manifest.get("operation", "replace") == "replace":
-                    updated[indices] = incoming
+                    updated[indices] = values.to(dtype=original.dtype)
                 else:
-                    updated[indices] = updated[indices] + incoming
+                    updated[indices] = (updated[indices].float() + values.float()).to(dtype=original.dtype)
                 updated = updated.reshape(original.shape)
             else:
                 if values.shape != original.shape:

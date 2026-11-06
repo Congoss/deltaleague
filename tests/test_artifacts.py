@@ -51,7 +51,7 @@ def test_validate_manifest_rejects_malformed_manifests():
 def test_validate_manifest_requires_a_finite_lora_alpha():
     spec = {'a': 'A', 'b': 'B', 'alpha': 1.5}
     validate_manifest(manifest(format='lora', tensors={'edit': spec}))
-    for alpha in (None, [], float('nan'), float('inf'), True):
+    for alpha in (None, [], float('nan'), float('inf'), True, 10 ** 400):
         with pytest.raises(ValueError, match='invalid_lora_alpha'):
             validate_manifest(manifest(format='lora', tensors={'edit': {**spec, 'alpha': alpha}}))
 
@@ -131,6 +131,25 @@ def test_reconstruct_lora_full_and_add_operations(tmp_path, monkeypatch):
         reconstruct(parent, sparse, manifest(tensors={}))
     with pytest.raises(ValueError, match='invalid_sparse_indices'):
         reconstruct(parent, store(tmp_path, 'oob.safetensors', {'i': torch.tensor([5], dtype=torch.int64), 'v': torch.tensor([1.])}), manifest())
+
+
+def test_sparse_replace_keeps_precision_the_parent_dtype_can_hold(tmp_path):
+    precise = 1.0 + 2 ** -40
+    parent = store(tmp_path, 'wide-parent.safetensors', {'edit': torch.zeros(2, dtype=torch.float64)})
+    patch = store(tmp_path, 'wide-patch.safetensors', {'i': torch.tensor([0], dtype=torch.int64), 'v': torch.tensor([precise], dtype=torch.float64)})
+    result = reconstruct(parent, patch, manifest())
+    assert result['edit'].dtype == torch.float64
+    assert result['edit'][0].item() == precise
+
+
+def test_lora_scales_by_alpha_over_rank(tmp_path):
+    parent = store(tmp_path, 'lora-parent.safetensors', {'lora': torch.eye(2)})
+    patch = store(tmp_path, 'lora-scale.safetensors', {
+        'A': torch.tensor([[1., 0.], [0., 1.]]),
+        'B': torch.tensor([[2., 0.], [0., 0.]]),
+    })
+    spec = manifest(format='lora', tensors={'lora': {'a': 'A', 'b': 'B', 'alpha': 4}})
+    assert torch.equal(reconstruct(parent, patch, spec)['lora'], torch.tensor([[5., 0.], [0., 1.]]))
 
 
 def test_build_sparse_rejects_inventory_shape_and_empty_patch(tmp_path):
