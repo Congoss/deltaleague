@@ -284,7 +284,12 @@ def status(submission: str, watch: bool = False):
 
 @submission_app.command("results")
 def results(submission: str, json_output: bool = typer.Option(False, "--json")):
-    show(call("GET", f"submissions/{submission}")["result"])
+    result = call("GET", f"submissions/{submission}")["result"]
+    if json_output or not isinstance(result, dict):
+        show(result)
+        return
+    lines = [f"{key}: {value}" for key, value in result.items() if isinstance(value, (str, int, float, bool)) or value is None]
+    typer.echo("\n".join(lines) if lines else json.dumps(result, indent=2))
 
 
 @app.command()

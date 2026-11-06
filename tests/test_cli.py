@@ -97,6 +97,22 @@ def test_validate_reports_malformed_submissions_without_a_traceback(tmp_path):
     assert 'valid' in valid.output
 
 
+def test_download_rejects_a_traversing_filename(tmp_path):
+    bad = dict(artifact(), name='../auth.json')
+    with pytest.raises(main.typer.BadParameter, match='filename'):
+        main.download_artifact(bad, tmp_path)
+    assert not (tmp_path / 'auth.json').exists()
+
+
+def test_results_reads_the_json_flag(monkeypatch):
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: {'result': {'validation_score': 1, 'rows': [1]}})
+    text = runner.invoke(main.app, ['submission', 'results', 'sub'])
+    assert text.exit_code == 0, text.output
+    assert 'validation_score: 1' in text.output and 'rows' not in text.output
+    raw = runner.invoke(main.app, ['submission', 'results', 'sub', '--json'])
+    assert '"rows"' in raw.output
+
+
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     def fail():
         raise httpx.ConnectError('https://user:secret@server.invalid')
