@@ -154,6 +154,66 @@ def test_submit_upload_errors_do_not_report_success(tmp_path, monkeypatch):
     assert calls == ['upload-sessions', 'upload-sessions']
 
 
+def test_submit_ignores_server_filenames_and_rejects_bad_urls(tmp_path, monkeypatch):
+    root = submission_dir(tmp_path)
+    puts = []
+    calls = []
+
+    def call(method, path, **kwargs):
+        calls.append(path)
+        if path == 'upload-sessions':
+            return {'id': 'upload-one', 'files': [
+                {'name': '../escape.bin', 'url': 'https://blob.invalid/escape?sig=secret'},
+                {'name': 'other.bin', 'url': 'http://evil.example/object'},
+                {'name': 'weights.safetensors', 'url': 'https://blob.invalid/real'},
+            ]}
+        return {'id': 'submission-one'}
+
+    monkeypatch.setattr(main, 'call', call)
+    monkeypatch.setattr(main.httpx, 'put', lambda url, **kwargs: puts.append(url) or httpx.Response(200, request=httpx.Request('PUT', url)))
+    result = runner.invoke(main.app, ['submit', str(root)])
+    assert result.exit_code == 0, result.output
+    assert puts == ['https://blob.invalid/real']
+    assert 'secret' not in result.output and 'escape.bin' not in result.output
+    (tmp_path / 'only').mkdir()
+    hostile = submission_dir(tmp_path / 'only')
+
+    def only_hostile(method, path, **kwargs):
+        if path == 'upload-sessions':
+            return {'id': 'upload-two', 'files': [{'name': '../escape.bin', 'url': 'https://blob.invalid/escape?sig=secret'}]}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(main, 'call', only_hostile)
+    puts.clear()
+    refused = runner.invoke(main.app, ['submit', str(hostile)])
+    assert refused.exit_code == 1 and puts == []
+    assert 'not allowed' in refused.output and 'secret' not in refused.output and 'Traceback' not in refused.output
+    for url in ('http://blob.invalid/x', 'https://user:pw@blob.invalid/x', 'http://127.0.0.1/x', 'http://[bad'):
+        (root / '.delta-upload.json').unlink(missing_ok=True)
+        monkeypatch.setattr(main, 'call', lambda method, path, url=url, **kwargs: {'id': 'u', 'files': [{'name': 'weights.safetensors', 'url': url}]} if path == 'upload-sessions' else {'id': 's'})
+        bad = runner.invoke(main.app, ['submit', str(root)])
+        assert bad.exit_code == 1 and 'not allowed' in bad.output and 'Traceback' not in bad.output, url
+
+
+def test_submit_keeps_the_idempotency_key_when_old_state_has_no_title(tmp_path, monkeypatch):
+    root = submission_dir(tmp_path)
+    manifest = json.loads((root / 'manifest.json').read_text())
+    fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+    (root / '.delta-upload.json').write_text(json.dumps({
+        'upload_id': 'kept', 'idempotency_key': 'key-1', 'fingerprint': fingerprint, 'api': main.API}))
+    calls = []
+
+    def call(method, path, **kwargs):
+        calls.append((path, kwargs))
+        return {'id': 'submission-one'}
+
+    monkeypatch.setattr(main, 'call', call)
+    result = runner.invoke(main.app, ['submit', str(root), '--title', 'Weight modification'])
+    assert result.exit_code == 0, result.output
+    assert [path for path, _ in calls] == ['submissions']
+    assert calls[0][1]['headers']['Idempotency-Key'] == 'key-1'
+
+
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     def fail():
         raise httpx.ConnectError('https://user:secret@server.invalid')

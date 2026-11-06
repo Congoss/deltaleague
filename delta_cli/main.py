@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 import time
 from urllib.parse import urlsplit
@@ -242,49 +243,71 @@ def validate(path: Path):
     typer.echo("Manifest and artifact hashes are valid. Server checks parent compatibility and tensors.")
 
 
+def fail(message):
+    typer.echo(message, err=True)
+    raise typer.Exit(1)
+
+
 def write_upload_state(path: Path, state: dict):
-    temporary = path.with_name(path.name + ".tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".delta-upload-", suffix=".tmp")
+    temporary = Path(name)
     try:
-        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as stream:
             json.dump(state, stream)
             stream.flush()
             os.fsync(stream.fileno())
-        os.chmod(temporary, 0o600)
         temporary.replace(path)
+        os.chmod(path, 0o600)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
 
 
 def upload_url_allowed(url):
-    parsed = urlsplit(url)
+    if not isinstance(url, str):
+        return False
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False
     if parsed.username or parsed.password or parsed.hostname is None:
         return False
     if parsed.scheme == "https":
         return True
-    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port is not None
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and port is not None
 
 
-def put_artifact(directory: Path, name: str, url: str):
+def put_artifact(directory: Path, name: str, url):
     """Upload one manifest artifact. Errors name the artifact and never the signed URL."""
     if not isinstance(name, str) or Path(name).name != name:
-        typer.echo("Upload failed: the server returned an unexpected filename.", err=True)
-        raise typer.Exit(1)
+        fail("Upload failed: the server returned an unexpected filename.")
+    if not upload_url_allowed(url):
+        fail(f"Upload failed for {name}: the upload URL is not allowed.")
     file = directory / name
-    if not isinstance(url, str) or not upload_url_allowed(url):
-        typer.echo(f"Upload failed for {name}: the upload URL must be HTTPS.", err=True)
-        raise typer.Exit(1)
     try:
         with file.open("rb") as stream:
             response = httpx.put(url, content=stream, headers={"Content-Length": str(file.stat().st_size)}, timeout=600, follow_redirects=False)
     except httpx.HTTPError:
-        typer.echo(f"Upload failed for {name}. Check the connection and rerun the same submit command.", err=True)
-        raise typer.Exit(1)
+        fail(f"Upload failed for {name}. Check the connection and rerun the same submit command.")
     if response.status_code < 200 or response.status_code >= 300:
-        typer.echo(f"Upload failed for {name} (HTTP {response.status_code}).", err=True)
-        raise typer.Exit(1)
+        fail(f"Upload failed for {name} (HTTP {response.status_code}).")
+
+
+def upload_artifacts(directory: Path, manifest: dict, upload):
+    """Upload every manifest artifact. Server filenames are never opened."""
+    if not isinstance(upload, dict) or not isinstance(upload.get("id"), str) or not upload["id"]:
+        fail("Upload failed: the server returned an invalid upload session.")
+    files = upload.get("files")
+    if not isinstance(files, list):
+        fail("Upload failed: the server returned an invalid upload session.")
+    urls = {}
+    for item in files:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            urls[item["name"]] = item.get("url")
+    for artifact in manifest["artifacts"]:
+        put_artifact(directory, artifact["name"], urls.get(artifact["name"]))
+    return upload["id"]
 
 
 @app.command()
@@ -302,22 +325,14 @@ def submit(path: Path, title: str = "Weight modification", pr: str | None = None
     if not isinstance(state, dict):
         state = {}
     fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
-    if state.get("fingerprint") != fingerprint or state.get("api") != API:
+    reusable = (state.get("fingerprint") == fingerprint and state.get("api") == API
+                and isinstance(state.get("upload_id"), str) and isinstance(state.get("idempotency_key"), str))
+    if not reusable:
         upload = call("POST", "upload-sessions", json={"manifest": manifest})
-        files = upload.get("files") if isinstance(upload, dict) else None
-        allowed = {artifact["name"] for artifact in manifest["artifacts"]}
-        if not isinstance(files, list) or not files:
-            typer.echo("Upload failed: the server returned an invalid upload session.", err=True)
-            raise typer.Exit(1)
-        for item in files:
-            name = item.get("name") if isinstance(item, dict) else None
-            if name not in allowed:
-                typer.echo("Upload failed: the server returned an unexpected filename.", err=True)
-                raise typer.Exit(1)
-            put_artifact(path, name, item.get("url"))
-        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()), "fingerprint": fingerprint, "api": API, "title": title}
+        state = {"upload_id": upload_artifacts(path, manifest, upload), "idempotency_key": str(uuid.uuid4()),
+                 "fingerprint": fingerprint, "api": API, "title": title}
         write_upload_state(state_path, state)
-    elif state.get("title") != title:
+    elif "title" in state and state["title"] != title:
         state = {**state, "title": title, "idempotency_key": str(uuid.uuid4())}
         write_upload_state(state_path, state)
     show(call("POST", "submissions", json={"upload_id": state["upload_id"], "title": title}, headers={"Idempotency-Key": state["idempotency_key"]}))
