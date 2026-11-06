@@ -32,8 +32,17 @@ def test_patch_build_rejects_a_modified_parent_and_an_existing_output(workspace)
     assert (output / 'manifest.json').exists()
     again = CliRunner().invoke(main.app, args)
     assert again.exit_code != 0 and 'already exists' in again.output
+    previous = (output / 'manifest.json').read_bytes()
+    (output / 'stale.txt').write_text('keep')
+    save_file({'layer.weight': torch.tensor([1., 2.])}, str(modified))
+    failed = CliRunner().invoke(main.app, args + ['--force'])
+    assert failed.exit_code != 0 and 'Traceback' not in failed.output
+    assert (output / 'manifest.json').read_bytes() == previous
+    assert (output / 'stale.txt').read_text() == 'keep'
+    save_file({'layer.weight': torch.tensor([1., 9.])}, str(modified))
     forced = CliRunner().invoke(main.app, args + ['--force'])
     assert forced.exit_code == 0, forced.output
+    assert not (output / 'stale.txt').exists()
 
 
 def test_parent_checkpoint_is_hashed_once(workspace, monkeypatch):

@@ -29,8 +29,13 @@ def model_directory(workspace, metadata, weights=None, patch=None, parent=None):
     if weights and patch:
         raise ValueError('Choose either --weights or --patch.')
     parent = parent or workspace / 'model'
-    digests = verify_artifact_bytes(parent, metadata['files'], skip_names=('model.safetensors',) if weights else ())
+    files = metadata['files']
+    if weights:
+        files = [artifact for artifact in files if not (isinstance(artifact, dict) and artifact.get('name') == 'model.safetensors')]
+    digests = verify_artifact_bytes(parent, files)
     if not weights and not patch:
+        if 'model.safetensors' not in digests:
+            raise ValueError('Parent artifact changed: model.safetensors. Keep the parent untouched.')
         yield parent, {'kind': 'parent', 'weights_sha256': digests['model.safetensors']}
         return
     with tempfile.TemporaryDirectory(prefix='delta-local-') as temp:

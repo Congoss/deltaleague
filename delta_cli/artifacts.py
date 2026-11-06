@@ -16,7 +16,7 @@ def file_hash(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def verify_artifact_bytes(directory, files, skip_names=()):
+def verify_artifact_bytes(directory, files):
     """Check recorded sizes and SHA-256 digests. Return the digests that were computed."""
     directory = Path(directory)
     if not isinstance(files, list):
@@ -28,13 +28,12 @@ def verify_artifact_bytes(directory, files, skip_names=()):
         name = artifact.get("name")
         if not isinstance(name, str) or Path(name).name != name:
             raise ValueError("Invalid model artifact filename.")
-        if name in skip_names:
-            continue
         path = directory / name
-        size = path.stat().st_size
+        if path.stat().st_size != artifact.get("size_bytes"):
+            raise ValueError(f"Parent artifact changed: {name}. Keep the parent untouched.")
         digest = file_hash(path)
-        if size != artifact.get("size_bytes") or digest != artifact.get("sha256"):
-            raise ValueError(f"Parent artifact changed: {name}. Keep the parent untouched and use --weights or --patch.")
+        if digest != artifact.get("sha256"):
+            raise ValueError(f"Parent artifact changed: {name}. Keep the parent untouched.")
         digests[name] = digest
     return digests
 
