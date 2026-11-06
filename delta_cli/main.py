@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 import time
+from urllib.parse import urlsplit
 import uuid
 import webbrowser
 import httpx
@@ -67,9 +68,12 @@ def show(value):
 @app.callback()
 def options(api: str = typer.Option(os.getenv("DELTA_API", "https://deltaleague.ai"), help="Delta League API origin")):
     global API
-    API = api.rstrip("/")
-    if not API.startswith("https://") and not API.startswith(("http://127.0.0.1:", "http://localhost:")):
+    parsed = urlsplit(api.strip())
+    loopback = (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port is not None
+                and not parsed.username and not parsed.password)
+    if parsed.hostname is None or (parsed.scheme != "https" and not loopback):
         raise typer.BadParameter("Use HTTPS outside localhost")
+    API = api.strip().rstrip("/")
 
 
 @app.command()
@@ -199,7 +203,10 @@ def competition_init(model: str, output: Path = typer.Option(Path("experiment"))
     if version["model_id"] != model:
         raise typer.BadParameter("The selected parent belongs to a different model.")
     config = call("GET", f"evaluation-configs/{board['config_id']}")
-    if not config.get("validation_download") or not config.get("validation_sha256"):
+    names = config.get("validation_names")
+    size = config.get("validation_size_bytes")
+    if (not config.get("validation_download") or not config.get("validation_sha256") or type(size) is not int or size <= 0
+            or not isinstance(names, list) or not names or not all(isinstance(name, str) and name for name in names)):
         raise typer.BadParameter("The server does not provide a verifiable public validation download for this configuration yet.")
     identity = {"api": API, "model_id": model, "parent_version_id": parent, "config_id": config["id"]}
     workspace_path = output / "delta-workspace.json"

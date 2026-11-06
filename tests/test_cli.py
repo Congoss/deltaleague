@@ -61,6 +61,75 @@ def test_init_records_reproducible_workspace_without_signed_urls(tmp_path, monke
     assert 'different model' in result.output
 
 
+def test_api_option_requires_https_outside_localhost(monkeypatch):
+    seen = []
+
+    def client():
+        seen.append(main.API)
+        raise httpx.ConnectError('stop')
+
+    monkeypatch.setattr(main, 'client', client)
+    for origin in ('http://evil.example', 'http://127.0.0.1:80@evil.example', 'http://localhost', 'http://127.0.0.1'):
+        result = runner.invoke(main.app, ['--api', origin, 'whoami'])
+        assert result.exit_code != 0 and 'HTTPS' in result.output, origin
+    assert seen == []
+    local = runner.invoke(main.app, ['--api', 'http://127.0.0.1:9', 'whoami'])
+    named = runner.invoke(main.app, ['--api', 'http://localhost:9/', 'whoami'])
+    remote = runner.invoke(main.app, ['--api', 'https://example.com/', 'whoami'])
+    assert 'HTTPS' not in local.output and 'HTTPS' not in named.output and 'HTTPS' not in remote.output
+    assert seen == ['http://127.0.0.1:9', 'http://localhost:9', 'https://example.com']
+
+
+def test_competition_init_rejects_missing_config_parent_and_validation(tmp_path, monkeypatch):
+    downloads = []
+    monkeypatch.setattr(main, 'pull_model', lambda *args, **kwargs: downloads.append(args))
+
+    def invoke(board, config=None, version=None):
+        def call(method, path, **kwargs):
+            if path == 'leaderboard':
+                return board
+            if path.startswith('evaluation-configs/'):
+                return config or {}
+            if path.startswith('model-versions/'):
+                return version or {'id': 'parent', 'model_id': 'model', 'files': []}
+            raise AssertionError(path)
+        monkeypatch.setattr(main, 'call', call)
+        return runner.invoke(main.app, ['competition', 'init', 'model', '--output', str(tmp_path / 'ws')])
+
+    missing_config = invoke({'config_id': None, 'rows': []})
+    assert missing_config.exit_code != 0 and 'no active competition' in missing_config.output
+    missing_parent = invoke({'config_id': 'config', 'rows': [{'version_id': 'child', 'parent_id': 'parent'}]})
+    assert missing_parent.exit_code != 0 and 'No original checkpoint' in missing_parent.output
+    ready = {'config_id': 'config', 'rows': [{'version_id': 'parent', 'parent_id': None}]}
+    incomplete = [
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v'},
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab', 'validation_size_bytes': 2},
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab', 'validation_size_bytes': 0, 'validation_names': ['math']},
+        {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab', 'validation_size_bytes': 2, 'validation_names': []},
+        {'id': 'config', 'validation_sha256': 'ab', 'validation_size_bytes': 2, 'validation_names': ['math']},
+    ]
+    for config in incomplete:
+        result = invoke(ready, config)
+        assert result.exit_code != 0 and 'verifiable' in result.output, config
+    assert downloads == []
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    (workspace / 'delta-workspace.json').write_text(json.dumps({
+        'api': 'https://deltaleague.ai', 'model_id': 'model', 'parent_version_id': 'parent', 'config_id': 'old'}))
+    occupied = invoke(ready, {'id': 'config', 'validation_download': 'https://blob.invalid/v', 'validation_sha256': 'ab',
+                              'validation_size_bytes': 2, 'validation_names': ['math']})
+    assert occupied.exit_code != 0 and 'another' in occupied.output and downloads == []
+
+
+def test_pull_model_refuses_a_different_parent(tmp_path, monkeypatch):
+    output = tmp_path / 'model'
+    output.mkdir()
+    (output / 'delta-model.json').write_text(json.dumps({'id': 'other'}))
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: {'id': 'parent', 'model_id': 'model', 'files': []})
+    with pytest.raises(main.typer.BadParameter, match='different parent'):
+        main.pull_model('parent', output)
+
+
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
     def fail():
         raise httpx.ConnectError('https://user:secret@server.invalid')
