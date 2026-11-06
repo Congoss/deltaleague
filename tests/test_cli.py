@@ -65,6 +65,18 @@ def submission_dir(tmp_path, payload=b'weights', model='tiny'):
     root = tmp_path / 'submission'
     root.mkdir()
     (root / 'weights.safetensors').write_bytes(payload)
+def test_validate_reports_malformed_submissions_without_a_traceback(tmp_path):
+    missing = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert missing.exit_code != 0 and 'Traceback' not in missing.output and 'manifest.json' in missing.output
+    submitted = runner.invoke(main.app, ['submit', str(tmp_path)])
+    assert submitted.exit_code != 0 and 'Traceback' not in submitted.output
+    (tmp_path / 'manifest.json').write_text('{')
+    broken = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert broken.exit_code != 0 and 'Traceback' not in broken.output
+    (tmp_path / 'manifest.json').write_text(json.dumps({'schema_version': 'nope'}))
+    schema = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert schema.exit_code != 0 and 'unsupported_schema' in schema.output and 'Traceback' not in schema.output
+    payload = b'weights'
     manifest = {
         'schema_version': 'delta.submission.v1', 'format': 'sparse-diff', 'operation': 'replace',
         'reconstruction_version': 'delta-reconstruct-v1',
@@ -370,6 +382,40 @@ def test_logout_removes_credentials_when_the_api_call_fails(tmp_path, monkeypatc
     assert offline.exit_code == 0, offline.output
     assert 'could not be revoked' in offline.output and 'Signed out' not in offline.output
     assert 'secret' not in offline.output and not auth.exists()
+        'parent_content_hash': 'a' * 64, 'model_config_id': 'tiny',
+        'tensors': {'layer.weight': {'indices': 't0.indices', 'values': 't0.values'}},
+        'artifacts': [{'name': 'weights.safetensors', 'sha256': hashlib.sha256(payload).hexdigest(), 'size_bytes': len(payload)}],
+    }
+    listed = dict(manifest, format=['sparse-diff'])
+    (tmp_path / 'manifest.json').write_text(json.dumps(listed))
+    typed = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert typed.exit_code != 0 and 'Traceback' not in typed.output
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    absent = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert absent.exit_code != 0 and 'Traceback' not in absent.output
+    (tmp_path / 'weights.safetensors').write_bytes(b'other')
+    mismatch = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert mismatch.exit_code != 0 and 'integrity' in mismatch.output and 'Traceback' not in mismatch.output
+    (tmp_path / 'weights.safetensors').write_bytes(payload)
+    valid = runner.invoke(main.app, ['validate', str(tmp_path)])
+    assert valid.exit_code == 0, valid.output
+    assert 'valid' in valid.output
+
+
+def test_download_rejects_a_traversing_filename(tmp_path):
+    bad = dict(artifact(), name='../auth.json')
+    with pytest.raises(main.typer.BadParameter, match='filename'):
+        main.download_artifact(bad, tmp_path)
+    assert not (tmp_path / 'auth.json').exists()
+
+
+def test_results_reads_the_json_flag(monkeypatch):
+    monkeypatch.setattr(main, 'call', lambda *args, **kwargs: {'result': {'validation_score': 1, 'rows': [1]}})
+    text = runner.invoke(main.app, ['submission', 'results', 'sub'])
+    assert text.exit_code == 0, text.output
+    assert 'validation_score: 1' in text.output and 'rows' not in text.output
+    raw = runner.invoke(main.app, ['submission', 'results', 'sub', '--json'])
+    assert '"rows"' in raw.output
 
 
 def test_api_connection_failure_does_not_print_credentials(monkeypatch):
