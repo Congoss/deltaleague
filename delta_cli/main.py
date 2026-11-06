@@ -29,6 +29,7 @@ app.add_typer(submission_app, name="submission")
 app.add_typer(competition_app, name="competition")
 app.add_typer(public_eval_app, name="public-eval")
 API = "https://deltaleague.ai"
+POLL_RETRIES = 5
 
 
 def config_path():
@@ -46,10 +47,29 @@ def client():
     return httpx.Client(base_url=API, headers={"Authorization": f"Bearer {token}"} if token else {}, timeout=60)
 
 
-def call(method, path, **kwargs):
+def retryable(response):
+    return response.status_code == 429 or response.status_code >= 500
+
+
+def request(method, path, retries=0, **kwargs):
+    """One attempt, or a bounded retry of transport errors, 429s and 5xx responses."""
+    bound = max(retries, 0)
+    with client() as http:
+        for attempt in range(bound + 1):
+            try:
+                response = http.request(method, "/api/v1/" + path, **kwargs)
+            except httpx.HTTPError:
+                if attempt == bound:
+                    raise
+            else:
+                if attempt == bound or not retryable(response):
+                    return response
+            time.sleep(2)
+
+
+def call(method, path, retries=0, **kwargs):
     try:
-        with client() as c:
-            r = c.request(method, "/api/v1/" + path, **kwargs)
+        r = request(method, path, retries, **kwargs)
     except httpx.HTTPError:
         typer.echo("Could not reach the Delta League API. Check the connection and --api URL, then retry.", err=True)
         raise typer.Exit(1)
@@ -89,7 +109,7 @@ def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the
         webbrowser.open(data["verification_url"])
     for _ in range(120):
         time.sleep(data["interval"])
-        result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]})
+        result = call("POST", f"cli-auth/{data['id']}", json={"secret": data["secret"]}, retries=POLL_RETRIES)
         if "token" in result:
             path = config_path()
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -99,6 +119,7 @@ def login(no_browser: bool = typer.Option(False, "--no-browser", help="Print the
                 json.dump({"api": API, "token": result["token"]}, f)
             typer.echo("Signed in.")
             return
+    typer.echo("Sign-in timed out. Run `delta login` again.", err=True)
     raise typer.Exit(1)
 
 
@@ -410,7 +431,7 @@ def submit(path: Path, title: str = "Weight modification", pr: str | None = None
 @submission_app.command("status")
 def status(submission: str, watch: bool = False):
     while True:
-        data = call("GET", f"submissions/{submission}")
+        data = call("GET", f"submissions/{submission}", retries=POLL_RETRIES if watch else 0)
         show(data)
         if not watch or data["state"] in {"verified", "rejected", "failed", "canceled"}:
             return
