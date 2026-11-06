@@ -1,0 +1,31 @@
+{
+  "vllm_base_image": "vllm/vllm-openai@sha256:c6e88abc61f250e3b0d72489b077107e92fd004c1270577700ef85dd3f41755d",
+  "server_args": [
+    "--language-model-only",
+    "--dtype",
+    "bfloat16",
+    "--max-model-len",
+    "34816",
+    "--max-num-seqs",
+    "32",
+    "--gpu-memory-utilization",
+    "0.85",
+    "--no-enable-log-requests"
+  ],
+  "text": "lm-eval 0.4.13 native prompts, few-shot counts, metrics and generation defaults; chat template with thinking disabled for generation; completion protocol for likelihood",
+  "coding": {
+    "temperature": 0,
+    "max_tokens": 4096,
+    "enable_thinking": false,
+    "sandbox": "cpython-3.12.10-wasi-wasmtime-50.0.1"
+  },
+  "bfcl": {
+    "temperature": 0,
+    "max_tokens": 4096,
+    "enable_thinking": false,
+    "protocol": "native AST/relevance and multi-turn state/response"
+  },
+  "aggregation": "equal-weight mean of 18 benchmark percentages",
+  "concurrency": "32 by default; record overrides in run.json; at most four coding sandboxes",
+  "dependencies": "delta_cli/public_eval/requirements.txt"
+}

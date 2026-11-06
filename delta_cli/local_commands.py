@@ -79,10 +79,33 @@ def evaluate(workspace: Path = Path('.'), version: str | None = None,
              benchmark: str | None = None, limit: int | None = typer.Option(None, min=1),
              max_new_tokens: int | None = typer.Option(None, min=1),
              thinking: bool | None = typer.Option(None, '--thinking/--no-thinking'),
-             output: Path = Path('local-results.json')):
-    """Evaluate public validation. --limit caps examples per benchmark; output is never an official score."""
+             output: Path = Path('local-results.json'),
+             endpoint: str | None = None, served_model: str = 'candidate',
+             content_hash: str | None = None, tokenizer: Path | None = None,
+             concurrency: int = typer.Option(32, min=1, max=256)):
+    """Evaluate public validation; advisory only. Pinned suites need --endpoint and --content-hash.
+
+    Limits, checkpoint selectors and generation overrides apply only to legacy configurations.
+    """
     try:
         root, _, config, _ = local.read_workspace(workspace)
+        if config.get('protocol_version') == 'delta-public-v1':
+            if not endpoint or not content_hash:
+                raise ValueError('This configuration uses the pinned public evaluator. Supply --endpoint and '
+                                 '--content-hash for your served checkpoint, or use `delta public-eval run --help`. '
+                                 'See PUBLIC_EVALUATION.md for the isolated runtime setup.')
+            if version or weights or patch or benchmark or limit or max_new_tokens is not None or thinking is not None:
+                raise ValueError('The pinned evaluator uses the complete frozen suite and its own generation settings. '
+                                 'Serve your chosen checkpoint first; use --content-hash to identify it.')
+            if local.file_hash(root / 'validation.json') != config['validation_sha256']:
+                raise ValueError('Public validation data changed; initialize a fresh workspace.')
+            from .public_eval.cli import run_command
+            run_command(endpoint=endpoint, model=served_model, tokenizer=tokenizer or root / 'model',
+                        content_hash=content_hash, manifest=root / 'validation.json', concurrency=concurrency,
+                        output=Path('public-results') if output == Path('local-results.json') else output)
+            return
+        if endpoint or content_hash or tokenizer:
+            raise ValueError('Endpoint evaluation requires a delta-public-v1 configuration.')
         tasks, names, full = local.public_examples(root, config, benchmark, limit)
         output = output.resolve()
         generations = local.generations_path(output)

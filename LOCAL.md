@@ -2,6 +2,12 @@
 
 Local inference uses Transformers and PyTorch. Apple Silicon Macs select MPS, Linux machines with a compatible PyTorch GPU build select CUDA, and other machines use CPU. `--device cpu`, `--device mps`, or `--device cuda` overrides selection. There is no rented compute, server evaluation quota, or automatic submission involved.
 
+For the current `delta-public-v1` competition suite, follow
+[PUBLIC_EVALUATION.md](PUBLIC_EVALUATION.md). Its frozen public evaluation uses a
+served checkpoint and a separate environment. The `delta run` instructions below
+work in current workspaces; all `delta evaluate` examples below apply only to
+legacy flat-example configurations. They do not accept the current grouped suite.
+
 ## Install
 
 From the CLI repository, in a Python 3.12+ virtual environment:
@@ -49,7 +55,7 @@ delta evaluate --patch submission --limit 2 --max-new-tokens 256 --output patch-
 
 `--weights` takes a full modified safetensors checkpoint, using the workspace parent's tokenizer and configuration. `--patch` takes a submission directory with `manifest.json`; it checks the parent and artifact hashes, then reconstructs supported LoRA/sparse/dense/full artifacts into a temporary checkpoint. Neither changes the parent. You can combine either with `--version` when editing that leaderboard checkpoint; a patch must reference that exact version. Temporary reconstructed files need disk space roughly equal to a full checkpoint and are removed on completion.
 
-## Evaluate public validation
+## Evaluate legacy public validation
 
 Start small:
 
@@ -76,13 +82,27 @@ Scores remain **advisory local results**. Transformers, vLLM, device precision, 
 
 ## Compare two runs
 
+For the current public evaluator:
+
+```sh
+delta compare baseline-results/result.json candidate-results/result.json --output compare.json
+```
+
+Both reports must contain the complete pinned suite. The command pairs by
+benchmark/item ID, validates suite and checkpoint identities, and recomputes
+scores from the items. Generation sidecars are unnecessary; token and truncation
+summaries and `generation_differs` are `null` because the contract does not provide
+those comparisons. See [PUBLIC_EVALUATION.md](PUBLIC_EVALUATION.md).
+
+For legacy local reports:
+
 ```sh
 delta compare baseline-quick.json edit-quick.json --output compare.json
 delta compare baseline-quick.json edit-quick.json --resamples 10000 --seed 0 --json
 ```
 
-`compare` reads two `delta evaluate` reports and the `<report>.generations.jsonl` file beside each. Sample scores are averaged per example, then examples are paired by position within each benchmark. It refuses reports with a different `config_id`, `validation_sha256`, or `model_id`, and reports whose benchmark or example sets differ; rerun both with the same `--limit` and `--benchmark`. Different `generation` settings are allowed and flagged `generation_differs`, so decoding changes can be compared.
+For this legacy format, `compare` reads two `delta evaluate` reports and the `<report>.generations.jsonl` file beside each. Sample scores are averaged per example, then examples are paired by position within each benchmark. It refuses reports with a different `config_id`, `validation_sha256`, or `model_id`, and reports whose benchmark or example sets differ; rerun both with the same `--limit` and `--benchmark`. Different `generation` settings are allowed and flagged `generation_differs`, so decoding changes can be compared.
 
-Per benchmark it reports `n`, both means, the difference, a paired percentile bootstrap 95% interval (examples resampled with replacement; `--resamples` defaults to 10,000, `--seed` to 0), wins, losses, and ties of the candidate, an exact two-sided sign test on the discordant pairs, truncation rates, mean output tokens, and `run_worst_case_se`, the worst-case standard error of one run's mean, `50/sqrt(n)` points. The overall difference uses the platform's equal-weight mean of benchmark means, bootstrapped jointly by resampling within each benchmark; its `run_worst_case_se` is `100 * sqrt(sum(0.25 / n_b)) / B` points for `B` benchmarks. The verdict always adds that two runs separate at about 2.8 times this value (`1.96 * sqrt(2)`). The overall result also carries pooled `wins`, `losses`, `ties`, and an exact two-sided `sign_test_p` across all paired examples, and is `separable` only when its interval excludes 0 and `sign_test_p` is below 0.05.
+Per benchmark it reports `n`, both means, the difference, a paired percentile bootstrap 95% interval (examples resampled with replacement; `--resamples` defaults to 10,000, `--seed` to 0), wins, losses, and ties of the candidate, an exact two-sided sign test on the discordant pairs, truncation rates, mean output tokens, and `run_worst_case_se`, the worst-case standard error of one run's mean, `50/sqrt(n)` points. The overall difference uses the platform's equal-weight mean of benchmark means, bootstrapped jointly by resampling within each benchmark; its `run_worst_case_se` is `100 * sqrt(sum(0.25 / n_b)) / B` points for `B` benchmarks. The displayed `1.96 * sqrt(2)` multiple is an independence-based unpaired uncertainty band, not a significance threshold for the paired comparison. The overall result also carries pooled `wins`, `losses`, `ties`, and an exact two-sided `sign_test_p` across all paired examples, and is `separable` only when its interval excludes 0, `sign_test_p` is below 0.05, and pooled wins/losses agree with the direction of the benchmark-weighted difference (`pooled_sign_agrees`). This is an exploratory screen, not a calibrated test of the weighted mean: pooled signs give each item equal weight, while the aggregate gives each benchmark equal weight. Intervals assume independent items within benchmarks and do not account for repeated candidate selection or run-to-run generation variability. A negative screen is not evidence of equivalence.
 
 `--json` prints the full structure and `--output` writes it; an existing output file is never overwritten. The comparison is advisory: official validation and private test scores are authoritative.

@@ -8,6 +8,7 @@ import webbrowser
 import httpx
 import typer
 from .local_commands import run, evaluate
+from .public_eval.cli import app as public_eval_app
 from .compare import compare
 from .artifacts import build_sparse, validate_manifest, file_hash
 
@@ -22,6 +23,7 @@ app.add_typer(model_app, name="model")
 app.add_typer(patch_app, name="patch")
 app.add_typer(submission_app, name="submission")
 app.add_typer(competition_app, name="competition")
+app.add_typer(public_eval_app, name="public-eval")
 API = "https://deltaleague.ai"
 
 
