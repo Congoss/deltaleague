@@ -1,8 +1,11 @@
+import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 import time
+from urllib.parse import urlsplit
 import uuid
 import webbrowser
 import httpx
@@ -242,6 +245,75 @@ def validate(path: Path):
     typer.echo("Manifest and artifact hashes are valid. Server checks parent compatibility and tensors.")
 
 
+def fail(message):
+    typer.echo(message, err=True)
+    raise typer.Exit(1)
+
+
+def write_upload_state(path: Path, state: dict):
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".delta-upload-", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+        os.chmod(path, 0o600)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def upload_url_allowed(url):
+    if not isinstance(url, str):
+        return False
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    if parsed.username or parsed.password or parsed.hostname is None:
+        return False
+    if parsed.scheme == "https":
+        return True
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and port is not None
+
+
+def put_artifact(directory: Path, name: str, url):
+    """Upload one manifest artifact. Errors name the artifact and never the signed URL."""
+    if not isinstance(name, str) or Path(name).name != name:
+        fail("Upload failed: the server returned an unexpected filename.")
+    if not upload_url_allowed(url):
+        fail(f"Upload failed for {name}: the upload URL is not allowed.")
+    file = directory / name
+    try:
+        with file.open("rb") as stream:
+            response = httpx.put(url, content=stream, headers={"Content-Length": str(file.stat().st_size)}, timeout=600, follow_redirects=False)
+    except (httpx.HTTPError, httpx.InvalidURL, OSError):
+        fail(f"Upload failed for {name}. Check the connection and rerun the same submit command.")
+    if response.status_code < 200 or response.status_code >= 300:
+        fail(f"Upload failed for {name} (HTTP {response.status_code}).")
+
+
+def pending_upload_files(manifest: dict, upload):
+    """Map URLs to manifest names without opening server-selected paths."""
+    if not isinstance(upload, dict) or not isinstance(upload.get("id"), str) or not upload["id"]:
+        fail("Upload failed: the server returned an invalid upload session.")
+    files = upload.get("files")
+    if not isinstance(files, list):
+        fail("Upload failed: the server returned an invalid upload session.")
+    names = {artifact["name"] for artifact in manifest["artifacts"]}
+    urls = {}
+    for item in files:
+        if isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"] in names:
+            if item["name"] in urls:
+                fail("Upload failed: duplicate artifact URLs in upload session.")
+            urls[item["name"]] = item.get("url")
+    return [{"name": artifact["name"], "url": urls.get(artifact["name"])}
+            for artifact in manifest["artifacts"]]
+
+
 @app.command()
 def submit(path: Path, title: str = "Weight modification", pr: str | None = None):
     validate(path)
@@ -250,18 +322,48 @@ def submit(path: Path, title: str = "Weight modification", pr: str | None = None
         manifest["research"] = {"pr_url": pr}
     # Persist intent before posting: retries after a lost response reuse the same idempotency key.
     state_path = path / ".delta-upload.json"
-    state = json.loads(state_path.read_text()) if state_path.exists() else {}
-    fingerprint = __import__("hashlib").sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
-    if state.get("fingerprint") != fingerprint or state.get("api") != API:
+    try:
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+    pending = state.get("pending_files", [])
+    reusable = (state.get("fingerprint") == fingerprint and state.get("api") == API
+                and isinstance(state.get("upload_id"), str) and bool(state["upload_id"])
+                and isinstance(state.get("idempotency_key"), str) and bool(state["idempotency_key"])
+                and isinstance(pending, list))
+    if pending and reusable:
+        expires = state.get("expires_at", 0)
+        reusable = type(expires) in (int, float) and expires > time.time()
+    if not reusable:
+        expires_at = time.time() + 3600
         upload = call("POST", "upload-sessions", json={"manifest": manifest})
-        for f in upload["files"]:
-            file = path / f["name"]
-            with file.open("rb") as stream:
-                response = httpx.put(f["url"], content=stream, headers={"Content-Length": str(file.stat().st_size)}, timeout=600)
-                response.raise_for_status()
-        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()), "fingerprint": fingerprint, "api": API}
-        state_path.write_text(json.dumps(state))
+        pending = pending_upload_files(manifest, upload)
+        state = {"upload_id": upload["id"], "idempotency_key": str(uuid.uuid4()),
+                 "fingerprint": fingerprint, "api": API, "title": title,
+                 "pending_files": pending, "expires_at": expires_at, "submission_started": False}
+    elif "title" in state and state["title"] != title:
+        if state.get("submission_started", not bool(pending)):
+            fail("Submission title is already fixed. Retry with the original title.")
+        state.update(title=title, idempotency_key=str(uuid.uuid4()))
+    # Legacy completed state keeps its key, including when its title is unknown.
+    state.setdefault("title", title)
+    write_upload_state(state_path, state)
+    names = {artifact["name"] for artifact in manifest["artifacts"]}
+    while state.get("pending_files"):
+        item = state["pending_files"][0]
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or item["name"] not in names:
+            fail("Upload failed: saved session contains an unexpected artifact.")
+        put_artifact(path, item["name"], item.get("url"))
+        state["pending_files"].pop(0)
+        write_upload_state(state_path, state)
+    # Persist before POST: a lost response may already have finalized the upload.
+    state["submission_started"] = True
+    write_upload_state(state_path, state)
     show(call("POST", "submissions", json={"upload_id": state["upload_id"], "title": title}, headers={"Idempotency-Key": state["idempotency_key"]}))
+
 
 
 @submission_app.command("status")
