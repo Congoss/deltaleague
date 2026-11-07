@@ -39,7 +39,7 @@ The longer budget recovered two IFEval answers and one GSM8K answer in both vers
 
 ## Submission
 
-Official evaluation pending.
+[Delta League submission](https://deltaleague.ai/submissions/10427ba2-5f4a-49fc-b9ae-e9a9499c8d71/). Official evaluation pending.
 
 ## Boundaries
 
