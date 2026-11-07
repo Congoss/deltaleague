@@ -73,17 +73,18 @@ def prompt(benchmark, doc):
             + '\nThe code must pass:\n' + '\n'.join(doc['test_list']))
 
 
-def run(manifest, benchmark, endpoint, model, image, output, *, reference_check=False, sandbox_backend="docker", concurrency=32):
+def run(manifest, benchmark, endpoint, model, image, output, *, reference_check=False, sandbox_backend="docker", concurrency=32, generation=None):
+    from .generation import sampling, final_answer
+    generation = generation or {}
     docs = manifest['code'][benchmark]['docs']
     if sandbox_backend == 'wasi':
         from .wasi import sandbox as wasi_sandbox, SANDBOX_ID
         if not wasi_sandbox('assert 1 + 1 == 2')['passed']:
             raise RuntimeError('WASI sandbox preflight failed')
-        evaluate = wasi_sandbox
+        evaluate = lambda source: wasi_sandbox(source)
         image = SANDBOX_ID
     elif sandbox_backend == 'docker':
-        def evaluate(source):
-            return sandbox(source, image)
+        evaluate = lambda source: sandbox(source, image)
     else:
         raise ValueError('Unknown sandbox backend')
 
@@ -95,10 +96,13 @@ def run(manifest, benchmark, endpoint, model, image, output, *, reference_check=
         else:
             response = httpx.post(endpoint.rstrip('/') + '/chat/completions', json={
                 'model': model, 'messages': [{'role': 'user', 'content': prompt(benchmark, doc)}],
-                'temperature': 0, 'max_tokens': 4096, 'seed': manifest['seed'],
-                'chat_template_kwargs': {'enable_thinking': False}}, timeout=600)
+                'temperature': 0, **sampling(generation), 'max_tokens': generation.get('max_tokens', 4096), 'seed': manifest['seed'],
+                'chat_template_kwargs': {'enable_thinking': generation.get('enable_thinking', False)}}, timeout=600)
             response.raise_for_status()
             data = response.json()
+            if generation.get('enable_thinking'):
+                message = data['choices'][0]['message']
+                message['content'] = final_answer(message.get('content') or '')
             code = extract_code(data['choices'][0]['message']['content'])
             usage, finish = data.get('usage', {}), data['choices'][0]['finish_reason']
         with sandbox_slots:

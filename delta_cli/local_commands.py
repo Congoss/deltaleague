@@ -102,7 +102,8 @@ def evaluate(workspace: Path = Path('.'), version: str | None = None,
             from .public_eval.cli import run_command
             run_command(endpoint=endpoint, model=served_model, tokenizer=tokenizer or root / 'model',
                         content_hash=content_hash, manifest=root / 'validation.json', concurrency=concurrency,
-                        output=Path('public-results') if output == Path('local-results.json') else output)
+                        output=Path('public-results') if output == Path('local-results.json') else output,
+                        evaluation_config=root / 'evaluation.json')
             return
         if endpoint or content_hash or tokenizer:
             raise ValueError('Endpoint evaluation requires a delta-public-v1 configuration.')

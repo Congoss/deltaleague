@@ -32,7 +32,7 @@ def configuration():
 
 
 def evaluate_public(*, endpoint, model, tokenizer, content_hash, output, manifest_path=None,
-                    concurrency=32, progress=None):
+                    concurrency=32, progress=None, generation=None, config_id=None):
     """Return public_validation/public_evidence; never accepts platform/private job payloads.
 
     The content hash identifies the checkpoint the caller serves. It is recorded,
@@ -49,7 +49,7 @@ def evaluate_public(*, endpoint, model, tokenizer, content_hash, output, manifes
     reports = output / 'reports'
     reports.mkdir()
     state = {**configuration(), 'local_only': True, 'model': model, 'content_hash': content_hash,
-             'tokenizer': str(tokenizer), 'concurrency': concurrency,
+             'tokenizer': str(tokenizer), 'concurrency': concurrency, 'generation': generation or {}, 'config_id': config_id,
              'dependencies': {name: version(name) for name in suite['versions']},
              'status': 'running', 'completed': 0, 'total': sum(map(len, expected_items(suite).values()))}
     state_path = output / 'run.json'
@@ -67,7 +67,7 @@ def evaluate_public(*, endpoint, model, tokenizer, content_hash, output, manifes
         for group, spec in suite['text'].items():
             from .text import run as text_run
             report = text_run(suite, group, endpoint, model, str(tokenizer), reports / (group + '.json'),
-                              concurrency=concurrency)
+                              concurrency=concurrency, **({'generation':generation} if generation else {}))
             metric, selected_filter = PRIMARY[group]
             groups[group] = [
                 {'id': f"{task}:{sample['doc_id']}", 'score': float(sample[metric])}
@@ -79,12 +79,12 @@ def evaluate_public(*, endpoint, model, tokenizer, content_hash, output, manifes
         for group in suite['code']:
             from .coding import run as code_run
             report = code_run(suite, group, endpoint, model, '', reports / (group + '.json'),
-                              sandbox_backend='wasi', concurrency=concurrency)
+                              sandbox_backend='wasi', concurrency=concurrency, **({'generation':generation} if generation else {}))
             groups[group] = [{'id': str(r['id']), 'score': float(r['passed'])} for r in report['samples']]
             evidence[group] = report
             record()
         from .tools import run as tools_run
-        report = tools_run(suite, endpoint, model, str(tokenizer), reports / 'bfcl.json', concurrency=concurrency)
+        report = tools_run(suite, endpoint, model, str(tokenizer), reports / 'bfcl.json', concurrency=concurrency, **({'generation':generation} if generation else {}))
         groups['bfcl_single_turn'], groups['bfcl_multi_turn'] = [], []
         evidence['bfcl'] = report
         for category, spec in suite['bfcl'].items():
@@ -104,7 +104,7 @@ def evaluate_public(*, endpoint, model, tokenizer, content_hash, output, manifes
         record()
         result = {'public_validation': public, 'public_evidence': evidence,
                   'validation_score': score, 'validation_benchmarks': components,
-                  'local_only': True, 'duration_seconds': time.monotonic() - started}
+                  'local_only': True, 'generation': generation or {}, 'config_id': config_id, 'duration_seconds': time.monotonic() - started}
         (output / 'result.json').write_text(json.dumps(result, indent=2))
         state['status'] = 'complete'
         return result
