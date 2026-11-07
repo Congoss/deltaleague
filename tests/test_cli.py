@@ -672,3 +672,19 @@ def test_login_lost_token_response_explains_restart(monkeypatch, tmp_path):
     assert len(polls) == 2
     assert 'Run `delta login` again' in result.output
     assert not (tmp_path / 'auth.json').exists()
+
+
+@pytest.mark.parametrize('prompt', ['--help', '-h'])
+def test_run_treats_help_after_separator_as_prompt(monkeypatch, prompt):
+    from types import SimpleNamespace
+    from delta_cli import local_commands
+    seen = []
+    def generate(text, generation, seed):
+        seen.append(text)
+        return {'text': 'generated', 'truncated': False}
+    fake = SimpleNamespace(generate=generate)
+    monkeypatch.setattr(local_commands, 'experiment', lambda *a, **k: nullcontext((fake, {'generation': {}})))
+    result = runner.invoke(main.app, ['run', '--', prompt])
+    assert result.exit_code == 0, result.output
+    assert seen == [prompt]
+    assert 'generated' in result.output

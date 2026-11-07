@@ -27,6 +27,9 @@ def load(path):
         means = local.example_means(json.loads(l) for l in f if l.strip())
     if not means:
         raise ValueError('Generations file has no rows.')
+    for name in means:
+        if any(ord(character) < 32 or ord(character) == 127 for character in str(name)):
+            raise ValueError('Benchmark name contains control characters.')
     return report, means
 
 
@@ -61,7 +64,11 @@ def sign_test(wins, losses):
     n = wins + losses
     if not n:
         return 1.0
-    tail = sum(math.comb(n, i) for i in range(min(wins, losses) + 1))
+    # C(n, i+1) = C(n, i) * (n-i) / (i+1). One pass replaces a fresh comb() per term.
+    term = tail = 1
+    for i in range(min(wins, losses)):
+        term = term * (n - i) // (i + 1)
+        tail += term
     return min(1.0, 2 * tail / 2 ** n)
 
 

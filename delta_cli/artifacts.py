@@ -43,7 +43,7 @@ def validate_manifest(manifest):
         raise ValueError("invalid_manifest")
     if manifest.get("schema_version") != "delta.submission.v1":
         raise ValueError("unsupported_schema")
-    if manifest.get("format") not in {"sparse-diff", "dense-diff", "lora", "full"}:
+    if manifest.get("format") not in ("sparse-diff", "dense-diff", "lora", "full"):
         raise ValueError("unsupported_format")
     if manifest.get("reconstruction_version") != "delta-reconstruct-v1":
         raise ValueError("unsupported_reconstruction")
@@ -65,7 +65,8 @@ def validate_manifest(manifest):
             raise ValueError("invalid_hash")
         if type(f.get("size_bytes")) is not int or f["size_bytes"] <= 0:
             raise ValueError("invalid_size")
-    if manifest.get("operation", "replace") not in {"replace", "add"}:
+    operation = manifest.get("operation", "replace")
+    if operation not in ("replace", "add"):
         raise ValueError("unsupported_operation")
     mapping = manifest.get("tensors", {})
     if not isinstance(mapping, dict) or not all(isinstance(k, str) and isinstance(v, dict) for k, v in mapping.items()):
@@ -76,6 +77,14 @@ def validate_manifest(manifest):
         required = {"a", "b", "alpha"} if manifest["format"] == "lora" else ({"indices", "values"} if manifest["format"] == "sparse-diff" else {"values"})
         if set(spec) != required or any(not isinstance(v, str) for k, v in spec.items() if k != "alpha"):
             raise ValueError("invalid_tensor_mapping")
+        if manifest["format"] == "lora":
+            alpha = spec.get("alpha")
+            try:
+                finite = type(alpha) in {int, float} and math.isfinite(float(alpha))
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise ValueError("invalid_lora_alpha")
     if len(mapping) > 10000:
         raise ValueError("too_many_tensors")
 
@@ -100,7 +109,8 @@ def reconstruct(parent_path, artifact_path, manifest, allowed_prefix=""):
     patch = load_file(str(artifact_path))
     if any(not torch.isfinite(t).all() for t in patch.values()):
         raise ValueError("nonfinite_patch")
-    result = {k: v.clone() for k, v in base.items()}
+    # Share untouched tensors with the loaded parent. Only a tensor the patch writes is copied.
+    result = dict(base)
     used = set()
     if manifest["format"] == "full":
         if set(patch) != set(base):
@@ -140,8 +150,20 @@ def reconstruct(parent_path, artifact_path, manifest, allowed_prefix=""):
                     raise ValueError("invalid_sparse_shape")
                 if indices.numel() and (indices[0] < 0 or indices[-1] >= original.numel() or not (indices[1:] > indices[:-1]).all()):
                     raise ValueError("invalid_sparse_indices")
-                updated = original.float().clone().reshape(-1)
-                updated[indices] = values.float() if manifest.get("operation", "replace") == "replace" else updated[indices] + values.float()
+                updated = original.clone().reshape(-1)
+                # CPU indexed reads/writes are missing for wide unsigned dtypes.
+                # A same-width signed view scatters the bits without rounding them.
+                signed = {torch.uint16: torch.int16, torch.uint32: torch.int32,
+                          torch.uint64: torch.int64}.get(original.dtype)
+                target = updated.view(signed) if signed is not None else updated
+                if manifest.get("operation", "replace") == "replace":
+                    replacement = values.to(dtype=original.dtype)
+                else:
+                    selected = target[indices]
+                    if signed is not None:
+                        selected = selected.view(original.dtype)
+                    replacement = (selected.float() + values.float()).to(dtype=original.dtype)
+                target[indices] = replacement.view(signed) if signed is not None else replacement
                 updated = updated.reshape(original.shape)
             else:
                 if values.shape != original.shape:
@@ -157,22 +179,24 @@ def reconstruct(parent_path, artifact_path, manifest, allowed_prefix=""):
 
 def build_sparse(parent, modified, output, parent_id, parent_hash, model_id):
     import torch
-    from safetensors.torch import load_file, save_file
+    from safetensors import safe_open
+    from safetensors.torch import save_file
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    before, after = load_file(str(parent)), load_file(str(modified))
-    if set(before) != set(after):
-        raise ValueError("tensor_inventory")
     tensors, mapping = {}, {}
-    for number, name in enumerate(sorted(before)):
-        a, b = before[name], after[name]
-        if a.shape != b.shape or a.dtype != b.dtype:
-            raise ValueError("tensor_shape_or_dtype")
-        idx = torch.nonzero(a.reshape(-1) != b.reshape(-1)).flatten()
-        if idx.numel():
-            ik, vk = f"t{number}.indices", f"t{number}.values"
-            tensors[ik], tensors[vk] = idx, b.reshape(-1)[idx]
-            mapping[name] = {"indices": ik, "values": vk}
+    with safe_open(str(parent), framework="pt") as before, safe_open(str(modified), framework="pt") as after:
+        if set(before.keys()) != set(after.keys()):
+            raise ValueError("tensor_inventory")
+        for number, name in enumerate(sorted(before.keys())):
+            a, b = before.get_tensor(name), after.get_tensor(name)
+            if a.shape != b.shape or a.dtype != b.dtype:
+                raise ValueError("tensor_shape_or_dtype")
+            idx = torch.nonzero(a.reshape(-1) != b.reshape(-1)).flatten()
+            if idx.numel():
+                ik, vk = f"t{number}.indices", f"t{number}.values"
+                tensors[ik], tensors[vk] = idx, b.reshape(-1)[idx]
+                mapping[name] = {"indices": ik, "values": vk}
+            del a, b
     if not tensors:
         raise ValueError("empty_patch")
     path = output / "weights.safetensors"
