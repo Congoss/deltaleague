@@ -29,4 +29,4 @@ For paired.py, put the parent and control artifact in sibling delta-leader/model
 
 ## Official submission
 
-[Delta League submission](https://deltaleague.ai/submissions/c661dabd-7b63-43c5-89d3-e003535b5a33/). Evaluation pending.
+[Delta League submission](https://deltaleague.ai/submissions/c661dabd-7b63-43c5-89d3-e003535b5a33/). The November 7 leaderboard uses public-thinking8k-ladder500-v1. The candidate placed 24th with 28.0% private test accuracy versus 28.4% for the Wait/Hmm control. Truncation fell from 53.0% to 48.6%. Public validation rose from 43.31% to 43.48%, while GSM8K and HumanEval each fell by 6.25 percentage points. The completion improvement did not carry over to private test accuracy.
