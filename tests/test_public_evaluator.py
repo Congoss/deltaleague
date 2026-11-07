@@ -224,3 +224,35 @@ def test_downloaded_manifest_hash_checked_before_dispatch(tmp_path, monkeypatch)
         '--endpoint', 'http://localhost:8000/v1', '--content-hash', CONTENT])
     assert result.exit_code == 1
     assert 'Public validation data changed' in result.output
+
+
+def test_generation_configuration_forwarded_to_all_adapters(monkeypatch, tmp_path):
+    # Use the existing API fixture in the runner tests to guard every adapter path.
+    from delta_cli.public_eval import text, coding, tools
+    import inspect
+    for adapter in (text.run,coding.run,tools.run):
+        assert 'generation' in inspect.signature(adapter).parameters
+    from delta_cli.public_eval.generation import final_answer
+    assert final_answer('unfinished thinking')==''
+    assert final_answer('reasoning</think>answer')=='answer'
+
+
+def test_downloaded_thinking_config_reaches_every_adapter(tmp_path, adapters, monkeypatch):
+    workspace(tmp_path)
+    path=tmp_path/'evaluation.json'; config=json.loads(path.read_text())
+    generation={'enable_thinking':True,'max_tokens':8192,'temperature':1.0,'seed':manifest()['seed']}
+    config['generation']={'max_num_seqs':128,'public_validation':generation};path.write_text(json.dumps(config))
+    received=[]
+    for module in (text,coding,tools):
+        original=module.run
+        def wrapped(*args,_original=original,**kwargs):
+            received.append(kwargs)
+            return _original(*args,**kwargs)
+        monkeypatch.setattr(module,'run',wrapped)
+    result=CliRunner().invoke(app,['evaluate','--workspace',str(tmp_path),'--endpoint','http://localhost:8000/v1',
+        '--content-hash',CONTENT,'--output',str(tmp_path/'results')])
+    assert result.exit_code==0,result.output
+    assert len(received)==17
+    assert all(r['generation']==generation and r['concurrency']==128 for r in received)
+    report=json.loads((tmp_path/'results/result.json').read_text())
+    assert report['generation']==generation and report['config_id']=='public'

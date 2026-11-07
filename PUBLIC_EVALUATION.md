@@ -228,3 +228,26 @@ require the isolated evaluator dependencies and dataset access/cache:
 Reference checks do not produce model scores. A full GPU run is needed to
 establish end-to-end numerical/runtime parity on real checkpoints; unit fixtures
 and source comparisons establish only the extraction and report contracts.
+
+## Versioned thinking settings (0.2.0)
+
+The platform imports this package's public evaluator directly; its automatic
+validation and the CLI now share the same implementation. To use a downloaded
+competition configuration, run:
+
+```sh
+delta evaluate --workspace experiment --endpoint http://127.0.0.1:8000/v1 \
+  --served-model candidate --content-hash CHECKPOINT_CONTENT_HASH
+```
+
+Or supply both `--evaluation-config experiment/evaluation.json` and
+`--manifest experiment/validation.json` to `delta public-eval run`.
+The downloaded configuration specifies `generation.public_validation`, including
+thinking, the total output-token cap, sampling, and concurrency. The new thinking
+revision uses 8,192 total tokens (reasoning plus final answer) for generative text,
+coding, and each tool-call generation. Native likelihood benchmarks retain their
+original scoring. Only the final answer is scored; unfinished reasoning is empty.
+Earlier configurations without this field preserve the non-thinking protocol.
+A workspace remains pinned; initialize a new workspace after the leaderboard
+switches configurations. The supplied content hash is still advisory and does not
+attest the endpoint. No private test data or private response cache is distributed.
