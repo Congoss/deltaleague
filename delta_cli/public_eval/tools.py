@@ -45,7 +45,7 @@ def verify_data(manifest):
         raise ValueError('BFCL bundled data changed')
 
 
-def handler_for(model, tokenizer=None, endpoint=None):
+def handler_for(model, tokenizer=None, endpoint=None, generation=None):
     from .bfcl_handler import Qwen35Handler
     from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING, ModelConfig
     from openai import OpenAI
@@ -53,7 +53,8 @@ def handler_for(model, tokenizer=None, endpoint=None):
     MODEL_CONFIG_MAPPING[alias] = ModelConfig(model_name=model, display_name=model,
         url='', org='Delta League', license='apache-2.0', model_handler=Qwen35Handler,
         is_fc_model=True, underscore_to_dot=False)
-    handler = Qwen35Handler(model, 0, alias, True)
+    handler = Qwen35Handler(model, (generation or {}).get('temperature', 0), alias, True)
+    handler.validation_generation = generation or {}
     if tokenizer is not None:
         from transformers import AutoTokenizer
         handler.tokenizer = AutoTokenizer.from_pretrained(tokenizer, trust_remote_code=False)
@@ -64,13 +65,13 @@ def handler_for(model, tokenizer=None, endpoint=None):
     return handler, alias
 
 
-def run(manifest, endpoint, model, tokenizer, output, *, concurrency=32):
+def run(manifest, endpoint, model, tokenizer, output, *, concurrency=32, generation=None):
     from bfcl_eval.utils import load_dataset_entry, load_ground_truth_entry
     from bfcl_eval.eval_checker.eval_runner import (
         ast_file_runner, multi_turn_runner, relevance_file_runner)
     verify_data(manifest)
     install_safe_dispatch()
-    handler, alias = handler_for(model, tokenizer, endpoint)
+    handler, alias = handler_for(model, tokenizer, endpoint, generation=generation)
     directory = output.with_suffix('')
     directory.mkdir(parents=True, exist_ok=True)
     scores = {}
@@ -106,7 +107,8 @@ def run(manifest, endpoint, model, tokenizer, output, *, concurrency=32):
             raise ValueError(f'Incomplete BFCL result for {category}')
         scores[category] = {'accuracy': accuracy, 'count': count}
     report = {'suite_sha256': manifest['sha256'], 'model': model, 'scores': scores,
-              'protocol': 'BFCL native AST and multi-turn state/response, Qwen tokenizer template, greedy non-thinking',
+              'protocol': 'BFCL native AST and multi-turn state/response, Qwen tokenizer template',
+              'generation': generation or {'enable_thinking': False, 'temperature': 0, 'max_tokens': 4096},
               'scope': 'sampled tool-calling and multi-turn simulation; excludes web-search and memory tracks'}
     output.write_text(json.dumps(report, indent=2))
     return report
