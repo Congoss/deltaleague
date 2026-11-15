@@ -51,7 +51,7 @@ The pilot covers four examples and one seed. CPU float32 Transformers differs fr
 
 ## Submission
 
-Official submission pending.
+[Delta League submission](https://deltaleague.ai/submissions/1a355a72-f8eb-4ae1-8b1c-64a7c5e9dd65/). Submitted on November 15, 2026. Official evaluation pending.
 
 ## Boundaries
 
