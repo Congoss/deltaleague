@@ -1,0 +1,75 @@
+{
+  "parent": {
+    "status_counts": {
+      "correct": 2,
+      "time_limit": 2
+    },
+    "elapsed_seconds": 600.1085954999871,
+    "cases": [
+      {
+        "id": "HumanEval/4",
+        "tokens": 682,
+        "closed": true,
+        "status": "correct"
+      },
+      {
+        "id": "HumanEval/11",
+        "tokens": 642,
+        "closed": true,
+        "status": "correct"
+      },
+      {
+        "id": "IFEval/7",
+        "tokens": 1541,
+        "closed": false,
+        "status": "time_limit"
+      },
+      {
+        "id": "IFEval/14",
+        "tokens": 1541,
+        "closed": false,
+        "status": "time_limit"
+      }
+    ]
+  },
+  "rollback25": {
+    "status_counts": {
+      "correct": 2,
+      "time_limit": 2
+    },
+    "elapsed_seconds": 600.1483664999978,
+    "cases": [
+      {
+        "id": "HumanEval/4",
+        "tokens": 732,
+        "closed": true,
+        "status": "correct"
+      },
+      {
+        "id": "HumanEval/11",
+        "tokens": 1412,
+        "closed": true,
+        "status": "correct"
+      },
+      {
+        "id": "IFEval/7",
+        "tokens": 1512,
+        "closed": false,
+        "status": "time_limit"
+      },
+      {
+        "id": "IFEval/14",
+        "tokens": 1512,
+        "closed": false,
+        "status": "time_limit"
+      }
+    ]
+  },
+  "limitations": [
+    "Four public examples and one sampling seed.",
+    "8192 token ceiling, with a separate 600-second CPU limit per arm.",
+    "IFEval completions were interrupted before final answers and cannot be scored.",
+    "Float32 Transformers inference differs from the official GPU engine.",
+    "Local scorer and code-prompt implementation came from the existing Delta League checkout."
+  ]
+}
