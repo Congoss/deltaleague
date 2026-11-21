@@ -1,0 +1,25 @@
+{
+  "parent": "a610fbdb-eb7e-42bc-ba43-19f7922df81f",
+  "parent_content_hash": "c67f72cd357a73c42d3cb33127827f27bdd9bd465f40824966ec9767280c3fea",
+  "evaluation": "qwen38-27b-nvfp4-agentic300-8k-v1",
+  "target": 248069,
+  "guide": 248058,
+  "alpha": 0.03,
+  "seed": null,
+  "changed_entries": 4801,
+  "artifact_sha256": "8e77b4490b52646d909108313407a9ff96d4cd223b640fb24ef58b223a90d6ea",
+  "artifact_bytes": 48162,
+  "relative_l2_change": 0.029989044112696345,
+  "relative_norm_error": 3.522905019748279e-05,
+  "source_row_sha256": {
+    "248069": "c4f10daecc751ba7186e6e6185a0318e671d0c8dd2c34ed2291ea63b136c4a99",
+    "248058": "5ec053f8f817cd1c3e21a59fa74bef6da7631b451d06d17a9375af7e327254c3"
+  },
+  "header_sha256": "7c4599a6514c51355f118bf13ed4798811ae88af83418a30bf77bcd5a7b42b1e",
+  "tokenizer_sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+  "network_bytes": 13119478,
+  "full_parent_hash_verified": false,
+  "sparse_reconstruction_verified": true,
+  "inference_run": false,
+  "quality_gain": null
+}
