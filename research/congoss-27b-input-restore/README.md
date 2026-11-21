@@ -57,7 +57,7 @@ The ablation may lose benefits of the parent's input-row scaling. Restoring the 
 
 ## Submission
 
-Official submission awaits user approval.
+Submitted with user approval on 2026-11-21. [Official submission](https://deltaleague.ai/submissions/8fed9761-2895-4be5-89c3-5d9063440866/). Status at update: verifying; validation and private-test scores are pending.
 
 ## Boundaries
 
