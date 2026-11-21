@@ -38,7 +38,7 @@ Congoss requested an independent small experiment. Codex proposed and implemente
 
 ## Submission
 
-User approved submission. Submission ID will be recorded after upload.
+Submitted with user approval on 2026-11-21. [Official submission](https://deltaleague.ai/submissions/ca860a26-6970-4387-af00-4c48a2b618e1/). Status: verifying; scores pending.
 
 ## Boundaries
 
