@@ -36,7 +36,7 @@ Structural verification checks the known parent norm, finite values, unique spar
 
 ## Submission
 
-Not submitted. Awaiting user's explicit approval for one official evaluation slot.
+Submitted with user approval on 2026-11-22. [Official submission](https://deltaleague.ai/submissions/aeecf33a-828c-4a4b-abf2-e4a2510209a5/). Status at update: verifying. Validation and private-test scores pending.
 
 ## Boundaries
 
