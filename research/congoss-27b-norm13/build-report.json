@@ -1,0 +1,23 @@
+{
+  "model": "qwen38-27b-nvfp4-ref",
+  "parent": "5065b8a8-e87d-4f06-b52b-183fcb3bab8c",
+  "parent_content_hash": "d2574ed609c86067c8d42febe6f8869cea2615c1c2d5d820bde84e933f836b0b",
+  "original": "47f586c3-5e3f-42ac-9991-e3db49e09103",
+  "evaluation": "qwen38-27b-nvfp4-agentic300-8k-v1",
+  "tensor": "model.language_model.norm.weight",
+  "original_relative_parent_gain": 1.4,
+  "original_relative_candidate_gain": 1.3,
+  "seed": null,
+  "parent_14_verified_exactly": true,
+  "parent_row_sha256": "7beeecb346f4bd6bb9c89b7584e75ffd8ae32a723936d280dfd86d713e9d161d",
+  "original_row_sha256": "d1d9fbdef187db987c117e021c7e4574ef32a5784c29f99d2722ce7654214738",
+  "parent_header_sha256": "7c4599a6514c51355f118bf13ed4798811ae88af83418a30bf77bcd5a7b42b1e",
+  "changed_entries": 5120,
+  "artifact_sha256": "e728fe6c028190cc4f3a117985d57c7a5c87ea59a919269d1635ac9ee9a09d17",
+  "artifact_bytes": 51352,
+  "network_bytes": 599793,
+  "reconstruction_verified": true,
+  "full_parent_hash_verified_locally": false,
+  "inference_run": false,
+  "quality_gain": null
+}
