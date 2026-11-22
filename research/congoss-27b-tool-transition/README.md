@@ -38,10 +38,11 @@ Congoss requested an independent small experiment. Codex proposed and implemente
 
 ## Submission
 
-Submitted with user approval on 2026-11-21. [Official submission](https://deltaleague.ai/submissions/ca860a26-6970-4387-af00-4c48a2b618e1/). Status: verifying; scores pending.
+Submitted with user approval on 2026-11-21. [Official submission](https://deltaleague.ai/submissions/ca860a26-6970-4387-af00-4c48a2b618e1/). Verified on the pinned evaluation: validation 73.85048752281939%; private 26.333333333333332% (79/300), versus parent 74.25575899625608% and 29% (87/300). Candidate truncations: 194/300 versus parent 191/300. No improvement demonstrated. These aggregate observations do not establish statistical significance or prove the proposed mechanism.
 
 ## Boundaries
 
 - [x] Only research/congoss-27b-tool-transition/ is changed.
 - [x] No weights, credentials, private test material, signed URLs or raw generation logs.
 - [x] Structural checks and verified parent scores are distinguished from unmeasured candidate quality.
+
