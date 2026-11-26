@@ -33,7 +33,7 @@ Parent verified score at preparation: 30% private (90/300), validation 74.712108
 
 ## Submission
 
-User approved one submission on 2026-11-26. URL and state will be recorded after upload. No result claimed yet.
+Submitted once with user approval on 2026-11-26. [Official submission](https://deltaleague.ai/submissions/97b854ee-47d2-40a5-aebb-e0e92524798e/). State at update: verifying. Validation and private scores pending.
 
 ## Boundaries
 
