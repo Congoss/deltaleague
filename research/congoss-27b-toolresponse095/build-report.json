@@ -1,0 +1,23 @@
+{
+  "parent": "5065b8a8-e87d-4f06-b52b-183fcb3bab8c",
+  "parent_content_hash": "d2574ed609c86067c8d42febe6f8869cea2615c1c2d5d820bde84e933f836b0b",
+  "evaluation": "qwen38-27b-nvfp4-agentic300-8k-v1",
+  "tensor": "model.language_model.embed_tokens.weight",
+  "token": 248067,
+  "token_text": "</tool_response>",
+  "scale": 0.95,
+  "seed": null,
+  "changed_entries": 5120,
+  "artifact_sha256": "2c72a29a91f4337330d09774721c9de4b812ab7dbb14541faec77efd927418c6",
+  "artifact_bytes": 51352,
+  "parent_row_sha256": "e5640cc1b922e70db3eda6982761f655db0b8aac9fd564a7ee7c93ba85b14d3c",
+  "parent_header_sha256": "7c4599a6514c51355f118bf13ed4798811ae88af83418a30bf77bcd5a7b42b1e",
+  "tokenizer_sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3",
+  "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "marker_present_in_template": true,
+  "network_bytes": 13118224,
+  "reconstruction_verified": true,
+  "full_parent_hash_verified_locally": false,
+  "inference_run": false,
+  "quality_gain": null
+}
